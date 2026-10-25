@@ -1,0 +1,86 @@
+; Conway's Life on a 16x16 wrapping grid, 2x2 pixels per cell
+dim a 16 16
+dim b 16 16
+for y = 0 to 16
+  for x = 0 to 16
+    r = rnd & 3
+    v = 0
+    if r == 0
+      v = 1
+    end
+    a[y][x] = v
+  end
+end
+label main
+  gosub show
+  gosub gen
+  wait 4
+  goto main
+
+label show
+  for y = 0 to 16
+    for x = 0 to 16
+      v = a[y][x]
+      c = 0
+      if v == 1
+        c = 11
+      end
+      px = x + x
+      py = y + y
+      qx = px + 1
+      qy = py + 1
+      plot px py c
+      plot qx py c
+      plot px qy c
+      plot qx qy c
+    end
+  end
+  return
+
+; next generation: count 8 neighbors, write into b, copy back
+label gen
+  for y = 0 to 16
+    ym = y + 15
+    ym = ym & 15
+    yp = y + 1
+    yp = yp & 15
+    for x = 0 to 16
+      xm = x + 15
+      xm = xm & 15
+      xp = x + 1
+      xp = xp & 15
+      n = a[ym][xm]
+      t = a[ym][x]
+      n = n + t
+      t = a[ym][xp]
+      n = n + t
+      t = a[y][xm]
+      n = n + t
+      t = a[y][xp]
+      n = n + t
+      t = a[yp][xm]
+      n = n + t
+      t = a[yp][x]
+      n = n + t
+      t = a[yp][xp]
+      n = n + t
+      v = a[y][x]
+      w = 0
+      if n == 3
+        w = 1
+      end
+      if v == 1
+        if n == 2
+          w = 1
+        end
+      end
+      b[y][x] = w
+    end
+  end
+  for y = 0 to 16
+    for x = 0 to 16
+      v = b[y][x]
+      a[y][x] = v
+    end
+  end
+  return
