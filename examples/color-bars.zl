@@ -1,0 +1,11 @@
+y = 0
+while y < 32
+  x = 0
+  while x < 32
+    c = x & 15
+    c = c + y
+    plot x y c
+    x = x + 1
+  end
+  y = y + 1
+end
