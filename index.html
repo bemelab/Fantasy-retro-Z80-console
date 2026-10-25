@@ -1,0 +1,2069 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZL-80 Virtual Console</title>
+<style>
+:root{--bg:#e3e6ea;--fg:#1a1f2b;--pn:#f3f4f6;--ac:#0f6b8f;--bd:#b4bac4;--ed:#fff;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10141c;--fg:#dfe6f2;--pn:#1a2030;--ac:#5ec8f2;--bd:#323b52;--ed:#0b0e15;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#10141c;--fg:#dfe6f2;--pn:#1a2030;--ac:#5ec8f2;--bd:#323b52;--ed:#0b0e15;color-scheme:dark}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;padding:14px;max-width:560px;margin:0 auto}
+h1{font:700 22px/1.2 Georgia,"Times New Roman",serif;margin:4px 0 2px}
+p.s{margin:0 0 12px;opacity:.75;font-size:13px}
+.bezel{background:var(--pn);border:1px solid var(--bd);border-radius:14px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:10px}
+canvas{width:min(100%,320px);aspect-ratio:1;image-rendering:pixelated;background:#000;border-radius:6px;border:3px solid var(--bd)}
+#st{font-size:12px;min-height:18px;width:100%;text-align:center;word-break:break-all}
+#st.err{color:#e5484d}
+#cap{font-size:12px;opacity:.8;text-align:center}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
+button,select{font:inherit;background:var(--pn);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:8px 14px;min-height:40px}
+button.go{background:var(--ac);color:var(--bg);border-color:var(--ac);font-weight:700}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.pad{display:grid;grid-template-columns:repeat(5,48px);gap:6px}
+.pad button{padding:0;min-height:44px;touch-action:none;user-select:none}
+textarea{width:100%;box-sizing:border-box;min-height:250px;background:var(--ed);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:10px;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;tab-size:2}
+details{margin:10px 0;border:1px solid var(--bd);border-radius:8px;padding:6px 12px;background:var(--pn)}
+summary{cursor:pointer;min-height:32px;line-height:32px}
+pre{white-space:pre-wrap;word-break:break-all;font-size:12px;margin:6px 0}
+#asm{white-space:pre;word-break:normal;overflow-x:auto}
+table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical-align:top}
+</style></head><body>
+<h1>ZL-80 virtual console</h1>
+<p class="s">A Z80 computer clocked at 4 MHz, with real instruction timings, 64 KB of memory, a choice of display modules (SSD1306 OLED, ST7735 TFT, Nokia 5110 LCD or a virtual screen), and its own language, ZL, that compiles to real Z80 machine code.</p>
+
+<div class="bezel">
+ <canvas id="cv" width="64" height="64"></canvas>
+ <div id="cap"></div>
+ <div id="st">Press Run to start.</div>
+ <div class="pad" id="pad">
+  <button data-b="1" aria-label="Left">◀</button><button data-b="4" aria-label="Up">▲</button><button data-b="8" aria-label="Down">▼</button><button data-b="2" aria-label="Right">▶</button><button data-b="16" aria-label="Fire">●</button>
+ </div>
+</div>
+
+<div class="row">
+ <button class="go" id="run">Run</button><button id="stop">Stop</button><button id="snd">Sound</button>
+ <select id="ex" aria-label="Example program"></select>
+ <select id="dsp" aria-label="Display module"></select>
+</div>
+<textarea id="src" spellcheck="false" aria-label="ZL source code"></textarea>
+
+<details><summary>Language reference</summary>
+<table>
+<tr><td>x = a + b</td><td>Also <b>-</b> and <b>&amp;</b>. Values are 8-bit (0–255), so 0 − 1 gives 255.</td></tr>
+<tr><td>rnd</td><td>Random byte, usable like a number: <i>x = rnd &amp; 31</i></td></tr>
+<tr><td>key k</td><td>Reads keys: 1 left, 2 right, 4 up, 8 down, 16 fire (combined as bits).</td></tr>
+<tr><td>plot x y c</td><td>Sets a pixel to color 0–15. The range depends on the display: virtual 64×64, SSD1306 128×64, ST7735 128×160, Nokia 5110 84×48. Monochrome displays show every color above 0 as on.</td></tr>
+<tr><td>cls</td><td>Clears the screen.</td></tr>
+<tr><td>wait n</td><td>Pauses n frames (60 per second).</td></tr>
+<tr><td>if a &lt; b … else … end</td><td>Compares: &lt; &gt; &lt;= &gt;= == !=</td></tr>
+<tr><td>while a &lt; b … end</td><td>Loop. Use <i>while 1 == 1</i> to loop forever.</td></tr>
+<tr><td>dim a 4</td><td>Declares an array (up to 256 items). Use <i>a[i] = 5</i> and <i>x = a[i]</i>. The index is a number or variable. <i>plot</i> takes plain variables, so copy array items first.</td></tr>
+<tr><td>label name</td><td>Marks a place in the program.</td></tr>
+<tr><td>goto name</td><td>Jumps to a label.</td></tr>
+<tr><td>gosub name … return</td><td>Calls a subroutine; <i>return</i> comes back to the line after the call.</td></tr>
+<tr><td>dim g 8 8</td><td>Two-dimensional array, used as <i>g[row][col]</i>. The second size must be a power of two and the total at most 256.</td></tr>
+<tr><td>for i = a to b … end</td><td>Counts i from a up to b − 1.</td></tr>
+<tr><td>inc v / dec v</td><td>Adds or subtracts 1.</td></tr>
+<tr><td>x = a | b</td><td>Bitwise or. <b>^</b> is xor.</td></tr>
+<tr><td>fill c</td><td>Fills the screen with color c.</td></tr>
+<tr><td>get v x y</td><td>Reads the color of pixel (x, y) into v.</td></tr>
+<tr><td>beep n</td><td>Plays a short tone; higher n is higher pitch.</td></tr>
+<tr><td>stop</td><td>Ends the program.</td></tr>
+<tr><td>def n r0 … r7</td><td>Defines 8×8 sprite n (0–31) from eight row bytes; bit 7 is the left pixel. Hex like <i>0x3C</i> works everywhere.</td></tr>
+<tr><td>crtc r v</td><td>Writes CRTC register r (0–31). R1 columns shown, R6 rows shown, R9 scan lines per row minus 1, R10/R11 cursor shape and blink, R12/R13 start address (hardware scroll), R14/R15 cursor address. R18/R19 set the 6545 update address and R31 writes a character there.</td></tr>
+<tr><td>poke hi lo v</td><td>Writes byte v to the 16-bit address hi×256 + lo. <i>peek v hi lo</i> reads it. Use plain values.</td></tr>
+<tr><td>vaddr hi lo / vdata v / vreg r v</td><td>TMS9918A: set the VRAM address, write a VRAM byte (address auto-increments), write VDP register r.</td></tr>
+<tr><td>vdg m / vbase p / vprint col row "TEXT"</td><td>MC6847: mode byte (bit 0 graphics, bits 1–3 mode, bit 4 color set), video RAM page, text into the 32×16 screen. Default is mode 13: 128×192, 4 colors.</td></tr>
+<tr><td>plot / get / cls / fill</td><td>Work on every display. The TMS9918A and MC6847 keep pixels in their own memory layouts, and the TMS9918A allows two colors per 8-pixel row, so colors can clash.</td></tr>
+<tr><td>ay r v / ayget v r</td><td>AY-3-8910 sound chip. Registers: R0–R5 tone periods (12 bit), R6 noise period, R7 mixer (bit 0–2 tone off, 3–5 noise off, a 1 disables), R8–R10 volume (bit 4 = use envelope), R11/R12 envelope period, R13 envelope shape (0–15), R14 port A (keyboard bits).</td></tr>
+<tr><td>note ch n</td><td>Sets tone channel ch (0–2) to MIDI-style note n (69 = A 440 Hz).</td></tr>
+<tr><td>vreg r v, vaddr hi lo, vdata v, vrd hi lo, vget v, vstat v, vfont, vtext "TEXT"</td><td>TMS9918A in full: write registers R0–R7, set VRAM address for writing or reading, write or read VRAM, read the status register (bit 7 frame, bit 6 fifth sprite, bit 5 collision), load a character set into the pattern table, write text characters. All four modes and 32 sprites work.</td></tr>
+<tr><td>data name v1 v2 …</td><td>Fills an array from a list of values (declare it with <i>dim</i> first), for example <i>data root 45 41 48 43</i>.</td></tr>
+<tr><td>crtcget v r</td><td>Reads CRTC register r (R12–R17) into v.</td></tr>
+<tr><td>tcolor a</td><td>Text attribute: low nibble is the text color, high nibble the background (0x0A is light green on black).</td></tr>
+<tr><td>locate col row</td><td>Moves the text position (row × R1 + col). Also moves the cursor.</td></tr>
+<tr><td>tprint "TEXT"</td><td>Writes characters into text RAM at the text position.</td></tr>
+<tr><td>thex v / tcls</td><td>Writes v as two hex digits / clears the text screen.</td></tr>
+<tr><td>sprite n x y c</td><td>Draws sprite n in color c. Color 0 erases it.</td></tr>
+<tr><td>print x y c "TEXT"</td><td>3×5 font, 4 pixels per character. Letters (shown uppercase), digits and . : - + ! ? , = /</td></tr>
+<tr><td>seg x y c v</td><td>Shows v as two hex digits on a seven-segment display (11×9 pixels). It erases the old digits first.</td></tr>
+<tr><td>; text</td><td>Comment. It also appears in the assembly listing.</td></tr>
+</table>
+<p class="s">Memory map: 0x0000 program, 0x4000 variables, 0x8000 screen. Port 0 is the keyboard, port 1 is the random generator.</p>
+</details>
+<details open><summary>Assembly listing with comments</summary><pre id="asm">Not compiled yet.</pre></details>
+<details><summary>Compiled Z80 machine code</summary><pre id="hex">Not compiled yet.</pre></details>
+
+<script>
+const EX={
+"Move a dot":`; arrow keys move, fire clears
+x = 16
+y = 16
+cls
+while 1 == 1
+  key k
+  d = k & 1
+  if d == 1
+    x = x - 1
+  end
+  d = k & 2
+  if d == 2
+    x = x + 1
+  end
+  d = k & 4
+  if d == 4
+    y = y - 1
+  end
+  d = k & 8
+  if d == 8
+    y = y + 1
+  end
+  d = k & 16
+  if d == 16
+    cls
+  end
+  x = x & 31
+  y = y & 31
+  plot x y 11
+  wait 3
+end`,
+"Bouncing ball":`x = 10
+y = 3
+dx = 1
+dy = 1
+while 1 == 1
+  plot x y 0
+  x = x + dx
+  y = y + dy
+  if x == 31
+    dx = 255
+  end
+  if x == 0
+    dx = 1
+  end
+  if y == 31
+    dy = 255
+  end
+  if y == 0
+    dy = 1
+  end
+  plot x y 10
+  wait 2
+end`,
+"Random sparkle":`; fills the screen with random colors
+while 1 == 1
+  x = rnd & 31
+  y = rnd & 31
+  c = rnd & 15
+  plot x y c
+end`,
+"Color bars":`y = 0
+while y < 32
+  x = 0
+  while x < 32
+    c = x & 15
+    c = c + y
+    plot x y c
+    x = x + 1
+  end
+  y = y + 1
+end`};
+EX["Four balls (simple)"]=(()=>{const N=[1,2,3,4],C=[8,10,12,14],each=f=>N.map(f).join("\n");
+ const mv=(n,a)=>`  ${a}${n} = ${a}${n} + d${a}${n}\n  if ${a}${n} > 31\n    d${a}${n} = 0 - d${a}${n}\n    ${a}${n} = ${a}${n} + d${a}${n}\n  end\n  r = rnd & 31\n  if r == 0\n    d${a}${n} = 0 - d${a}${n}\n  end`;
+ return "; four balls: random start, speed and turns\n"+
+  each(n=>`x${n} = rnd & 31\ny${n} = rnd & 31\nr = rnd & 2\ndx${n} = r - 1\nr = rnd & 2\ndy${n} = r - 1`)+
+  "\nwhile 1 == 1\n"+each(n=>`  plot x${n} y${n} 0`)+"\n"+
+  each(n=>mv(n,"x")+"\n"+mv(n,"y"))+"\n"+
+  each(n=>`  plot x${n} y${n} ${C[n-1]}`)+"\n  wait 2\nend"})();
+EX["Four balls, arrays"]=`; balls turn only when they hit a wall or each other
+dim bx 4
+dim by 4
+dim dx 4
+dim dy 4
+bx[0] = 5
+by[0] = 5
+bx[1] = 26
+by[1] = 6
+bx[2] = 6
+by[2] = 26
+bx[3] = 25
+by[3] = 25
+i = 0
+while i < 4
+  gosub rdir
+  dx[i] = v
+  gosub rdir
+  dy[i] = v
+  i = i + 1
+end
+cls
+label main
+  i = 0
+  while i < 4
+    px = bx[i]
+    py = by[i]
+    plot px py 0
+    i = i + 1
+  end
+  i = 0
+  while i < 4
+    gosub move
+    i = i + 1
+  end
+  i = 0
+  while i < 4
+    px = bx[i]
+    py = by[i]
+    c = i + 8
+    plot px py c
+    i = i + 1
+  end
+  wait 6
+  goto main
+
+; random direction: v = 1 or 255 (-1)
+label rdir
+  r = rnd & 2
+  v = r - 1
+  return
+
+; move ball i one step
+label move
+  nx = bx[i] + dx[i]
+  ny = by[i] + dy[i]
+  if nx > 31
+    if nx == 32
+      dx[i] = 255
+    else
+      dx[i] = 1
+    end
+    gosub rdir
+    dy[i] = v
+    return
+  end
+  if ny > 31
+    if ny == 32
+      dy[i] = 255
+    else
+      dy[i] = 1
+    end
+    gosub rdir
+    dx[i] = v
+    return
+  end
+  j = 0
+  while j < 4
+    if j != i
+      t = nx - bx[j]
+      t = t + 1
+      if t < 3
+        t = ny - by[j]
+        t = t + 1
+        if t < 3
+          gosub rdir
+          dx[i] = v
+          gosub rdir
+          dy[i] = v
+          gosub rdir
+          dx[j] = v
+          gosub rdir
+          dy[j] = v
+          return
+        end
+      end
+    end
+    j = j + 1
+  end
+  bx[i] = nx
+  by[i] = ny
+  return`;
+EX["Commands demo"]=`; for, fill, get, inc, beep and the | ^ operators
+fill 1
+for i = 0 to 32
+  d = 31 - i
+  plot i i 10
+  plot i d 8
+  beep i
+  wait 2
+end
+get v 5 5
+plot 16 16 v
+stop`;
+EX["Life (2D arrays)"]=`; Conway's Life on a 16x16 wrapping grid, 2x2 pixels per cell
+dim a 16 16
+dim b 16 16
+for y = 0 to 16
+  for x = 0 to 16
+    r = rnd & 3
+    v = 0
+    if r == 0
+      v = 1
+    end
+    a[y][x] = v
+  end
+end
+label main
+  gosub show
+  gosub gen
+  wait 4
+  goto main
+
+label show
+  for y = 0 to 16
+    for x = 0 to 16
+      v = a[y][x]
+      c = 0
+      if v == 1
+        c = 11
+      end
+      px = x + x
+      py = y + y
+      qx = px + 1
+      qy = py + 1
+      plot px py c
+      plot qx py c
+      plot px qy c
+      plot qx qy c
+    end
+  end
+  return
+
+; next generation: count 8 neighbors, write into b, copy back
+label gen
+  for y = 0 to 16
+    ym = y + 15
+    ym = ym & 15
+    yp = y + 1
+    yp = yp & 15
+    for x = 0 to 16
+      xm = x + 15
+      xm = xm & 15
+      xp = x + 1
+      xp = xp & 15
+      n = a[ym][xm]
+      t = a[ym][x]
+      n = n + t
+      t = a[ym][xp]
+      n = n + t
+      t = a[y][xm]
+      n = n + t
+      t = a[y][xp]
+      n = n + t
+      t = a[yp][xm]
+      n = n + t
+      t = a[yp][x]
+      n = n + t
+      t = a[yp][xp]
+      n = n + t
+      v = a[y][x]
+      w = 0
+      if n == 3
+        w = 1
+      end
+      if v == 1
+        if n == 2
+          w = 1
+        end
+      end
+      b[y][x] = w
+    end
+  end
+  for y = 0 to 16
+    for x = 0 to 16
+      v = b[y][x]
+      a[y][x] = v
+    end
+  end
+  return`;
+EX["Eight balls (2D array)"]=`; 8 balls in one 2D array: ball[i][field]
+; fields: 0 = x, 1 = y, 2 = dx, 3 = dy (1 or 255 means -1)
+dim ball 8 4
+fx = 0
+fy = 1
+fdx = 2
+fdy = 3
+
+; start on a grid with random directions
+for i = 0 to 8
+  k = i & 3
+  x = k + k
+  x = x + x
+  x = x + x
+  x = x + 3
+  r = i & 4
+  y = r + r
+  y = y + y
+  y = y + 6
+  ball[i][fx] = x
+  ball[i][fy] = y
+  gosub rdir
+  ball[i][fdx] = v
+  gosub rdir
+  ball[i][fdy] = v
+end
+cls
+
+label main
+  for i = 0 to 8
+    px = ball[i][fx]
+    py = ball[i][fy]
+    plot px py 0
+  end
+  for i = 0 to 8
+    gosub move
+  end
+  for i = 0 to 8
+    px = ball[i][fx]
+    py = ball[i][fy]
+    c = i + 8
+    plot px py c
+  end
+  wait 5
+  goto main
+
+; random direction: v = 1 or 255
+label rdir
+  r = rnd & 2
+  v = r - 1
+  return
+
+; move ball i one step; turn only on a wall or ball hit
+label move
+  nx = ball[i][fx] + ball[i][fdx]
+  ny = ball[i][fy] + ball[i][fdy]
+  if nx > 31
+    if nx == 32
+      ball[i][fdx] = 255
+    else
+      ball[i][fdx] = 1
+    end
+    gosub rdir
+    ball[i][fdy] = v
+    return
+  end
+  if ny > 31
+    if ny == 32
+      ball[i][fdy] = 255
+    else
+      ball[i][fdy] = 1
+    end
+    gosub rdir
+    ball[i][fdx] = v
+    return
+  end
+  for j = 0 to 8
+    if j != i
+      t = nx - ball[j][fx]
+      t = t + 1
+      if t < 3
+        t = ny - ball[j][fy]
+        t = t + 1
+        if t < 3
+          gosub rdir
+          ball[i][fdx] = v
+          gosub rdir
+          ball[i][fdy] = v
+          gosub rdir
+          ball[j][fdx] = v
+          gosub rdir
+          ball[j][fdy] = v
+          return
+        end
+      end
+    end
+  end
+  ball[i][fx] = nx
+  ball[i][fy] = ny
+  return`;
+EX["Sprites, text and hex display"]=`; sprites, 3x5 text and a seven-segment hex display (64x64 screen)
+def 0 24 60 126 255 255 126 60 24   ; diamond
+def 1 60 66 165 129 165 153 66 60   ; face
+def 2 36 36 126 219 255 255 36 66   ; invader
+x = 28
+y = 44
+n = 0
+cls
+print 2 2 11 "ZL-80 HEX"
+sprite 0 6 24 9
+sprite 2 48 24 8
+label main
+  sprite 1 x y 0
+  key k
+  d = k & 1
+  if d == 1
+    x = x - 1
+  end
+  d = k & 2
+  if d == 2
+    x = x + 1
+  end
+  d = k & 4
+  if d == 4
+    y = y - 1
+  end
+  d = k & 8
+  if d == 8
+    y = y + 1
+  end
+  x = x & 63
+  y = y & 63
+  sprite 1 x y 10
+  inc n
+  seg 26 11 14 n
+  wait 2
+  goto main`;
+EX["Alien attack (game with sound)"]=`; ALIEN ATTACK
+; left/right move, fire shoots. Sounds: shot, hit, march, bomb, win, game over.
+; Uses the top-left 64x64 area, so it runs on every display.
+dim al 3 8            ; alien alive flags: al[row][col]
+score = 0
+lives = 3
+px = 30
+go = 0
+wv = 0
+sn = 0
+t = 0
+cls
+gosub newwave
+gosub hud
+
+label main
+  t = t + 1
+  key k
+  m = t & 1
+  if m == 0           ; ship moves every 2nd frame
+    c = 0
+    gosub ship
+    d = k & 1
+    if d == 1
+      if px > 2
+        px = px - 1
+      end
+    end
+    d = k & 2
+    if d == 2
+      if px < 61
+        px = px + 1
+      end
+    end
+  end
+  c = 10
+  gosub ship
+  d = k & 16          ; fire
+  if d == 16
+    if bon == 0
+      bon = 1
+      bx = px
+      by = 57
+      beep 40
+    end
+  end
+  if bon == 1         ; move the shot
+    c = 0
+    gosub bullet
+    by = by - 2
+    if by < 11
+      bon = 0
+    else
+      gosub hitcheck
+      if bon == 1
+        c = 7
+        gosub bullet
+      end
+    end
+  end
+  fc = fc + 1         ; fleet marches faster as it shrinks
+  if fc >= sp
+    fc = 0
+    gosub step
+  end
+  if bmo == 0         ; aliens drop one bomb at a time
+    d = rnd & 7
+    if d == 0
+      r = rnd & 3
+      q = rnd & 7
+      if r < 3
+        if q < 6
+          if al[r][q] == 1
+            gosub pos
+            bmx = ax + 1
+            bmy = ay + 3
+            bmo = 1
+          end
+        end
+      end
+    end
+  else
+    m = t & 1
+    if m == 0
+      plot bmx bmy 0
+      bmy = bmy + 1
+      if bmy > 62
+        bmo = 0
+      else
+        if bmy > 59
+          e = bmx - px
+          e = e + 1
+          if e < 3
+            bmo = 0
+            lives = lives - 1
+            beep 4
+            gosub hud
+            if lives == 0
+              go = 1
+            end
+          end
+        end
+        if bmo == 1
+          plot bmx bmy 12
+        end
+      end
+    end
+  end
+  if wv == 1
+    gosub win
+  end
+  if go == 1
+    gosub over
+  end
+  wait 1
+  goto main
+
+; alien position from row r and column q -> ax, ay
+label pos
+  cx = q + q
+  cx = cx + cx
+  cx = cx + cx
+  ax = ox + cx
+  cy = r + r
+  cy = cy + cy
+  cy = cy + cy
+  ay = oy + cy
+  return
+
+; one alien, 3x2 pixels, color c
+label alien
+  plot ax ay c
+  qx = ax + 1
+  plot qx ay c
+  qx = ax + 2
+  plot qx ay c
+  qy = ay + 1
+  plot ax qy c
+  plot qx qy c
+  return
+
+label ship
+  plot px 60 c
+  qx = px - 1
+  plot qx 61 c
+  plot px 61 c
+  qx = px + 1
+  plot qx 61 c
+  return
+
+label bullet
+  plot bx by c
+  qy = by + 1
+  plot bx qy c
+  return
+
+; draw (fe = 1) or erase (fe = 0) the whole fleet
+label fleet
+  for r = 0 to 3
+    for q = 0 to 6
+      if al[r][q] == 1
+        gosub pos
+        c = 0
+        if fe == 1
+          c = r + 9
+        end
+        gosub alien
+      end
+    end
+  end
+  return
+
+; one march step: sideways, drop at the edge
+label step
+  fe = 0
+  gosub fleet
+  if dir == 1
+    ox = ox + 2
+  else
+    ox = ox - 2
+  end
+  if ox > 20
+    if dir == 1
+      dir = 255
+      ox = 20
+    else
+      dir = 1
+      ox = 0
+    end
+    oy = oy + 4
+  end
+  fe = 1
+  gosub fleet
+  sn = sn + 1
+  m = sn & 3
+  m = m + m
+  m = m + 3
+  beep m
+  if oy > 38
+    go = 1
+  end
+  return
+
+; does the shot touch an alien?
+label hitcheck
+  for r = 0 to 3
+    for q = 0 to 6
+      if bon == 1
+        if al[r][q] == 1
+          gosub pos
+          e = bx - ax
+          if e < 3
+            e = by - ay
+            e = e + 1
+            if e < 4
+              al[r][q] = 0
+              c = 0
+              gosub alien
+              bon = 0
+              score = score + 1
+              cnt = cnt - 1
+              sp = cnt + 3
+              beep 70
+              gosub hud
+              if cnt == 0
+                wv = 1
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return
+
+; score as a hex display, lives as red blocks
+label hud
+  seg 2 1 11 score
+  for i = 0 to 4
+    ix = i + i
+    ix = ix + ix
+    ix = ix + 48
+    c = 0
+    if i < lives
+      c = 8
+    end
+    plot ix 3 c
+    qx = ix + 1
+    plot qx 3 c
+    plot ix 4 c
+    plot qx 4 c
+  end
+  return
+
+label newwave
+  for r = 0 to 3
+    for q = 0 to 8
+      al[r][q] = 0
+      if q < 6
+        al[r][q] = 1
+      end
+    end
+  end
+  cnt = 18
+  ox = 4
+  oy = 12
+  dir = 1
+  fc = 0
+  bon = 0
+  bmo = 0
+  sp = 21
+  fe = 1
+  gosub fleet
+  return
+
+label win
+  wv = 0
+  for i = 0 to 8
+    j = i + i
+    j = j + 30
+    beep j
+    wait 5
+  end
+  cls
+  gosub newwave
+  gosub hud
+  return
+
+label over
+  print 14 28 8 "GAME OVER"
+  for i = 0 to 8
+    j = i + i
+    j = 40 - j
+    beep j
+    wait 5
+  end
+  d = 0
+  while d == 0        ; press fire to play again
+    key k
+    d = k & 16
+  end
+  go = 0
+  score = 0
+  lives = 3
+  px = 30
+  cls
+  gosub newwave
+  gosub hud
+  wait 20
+  return`;
+EX["MC6845 CRTC text and hardware scroll"]=`; MC6845 CRTC demo. The CRTC display module is selected for you.
+; tcolor/tcls/locate/tprint/thex fill the text RAM, crtc r v writes a CRTC register.
+tcolor 0x0A
+tcls
+for n = 0 to 40
+  locate 0 n
+  tprint "LINE "
+  thex n
+  tprint "  TEXT RAM, SCROLLED BY THE CRTC START ADDRESS (R12, R13)"
+end
+crtc 10 0x66          ; cursor start line 6, blinking 1/32
+crtc 11 7             ; cursor end line 7
+hi = 0
+lo = 0
+s = 0
+label scroll
+  crtc 12 hi          ; start address high byte
+  crtc 13 lo          ; start address low byte
+  wait 8
+  lo = lo + 80        ; one text row further (80 cells per row)
+  if lo < 80
+    hi = hi + 1
+  end
+  s = s + 1
+  if s == 16
+    s = 0
+    hi = 0
+    lo = 0
+  end
+  goto scroll`;
+EX["Graphics on CRTC, TMS9918 and MC6847"]=`; one program, three graphics controllers
+; pick MC6845 CRTC graphics, TMS9918A VDP or MC6847 VDG in the display list
+; uses x 0-127, y 0-63 and colors 1-3, which all three can show
+cls
+for x = 0 to 128
+  plot x 0 1
+  plot x 63 1
+end
+for y = 0 to 64
+  plot 0 y 1
+  plot 127 y 1
+end
+for y = 4 to 16          ; three color bars
+  c = 1
+  if y > 7
+    c = 2
+  end
+  if y > 11
+    c = 3
+  end
+  for x = 8 to 120
+    plot x y c
+  end
+end
+bx = 90
+by = 30
+dx = 1
+dy = 1
+label main
+  plot bx by 0
+  bx = bx + dx
+  by = by + dy
+  if bx == 125
+    dx = 255
+  end
+  if bx == 2
+    dx = 1
+  end
+  if by == 61
+    dy = 255
+  end
+  if by == 22
+    dy = 1
+  end
+  plot bx by 3
+  wait 1
+  goto main`;
+EX["TMS9918A sprites and Graphics II"]=`; TMS9918A: Graphics II bitmap plus a hardware sprite (arrows move it)
+; vaddr hi lo sets the VRAM address, vdata writes a byte, vreg r v writes a register
+cls
+vaddr 0x38 0x00        ; sprite pattern 0 lives at VRAM $3800
+vdata 0x3C
+vdata 0x7E
+vdata 0xFF
+vdata 0xFF
+vdata 0xFF
+vdata 0xFF
+vdata 0x7E
+vdata 0x3C
+for x = 0 to 255
+  plot x 100 5
+end
+x = 120
+y = 80
+label main
+  key k
+  d = k & 1
+  if d == 1
+    x = x - 2
+  end
+  d = k & 2
+  if d == 2
+    x = x + 2
+  end
+  d = k & 4
+  if d == 4
+    y = y - 2
+  end
+  d = k & 8
+  if d == 8
+    y = y + 2
+  end
+  vaddr 0x1B 0x00      ; sprite attribute table: y, x, pattern, color
+  vdata y
+  vdata x
+  vdata 0
+  vdata 11
+  vdata 0xD0           ; end of sprite list
+  wait 1
+  goto main`;
+EX["MC6847 text and semigraphics"]=`; MC6847 VDG: 32x16 text and semigraphics blocks
+; vdg m sets the mode pins: bit 0 graphics, bits 1-3 mode, bit 4 color set
+vdg 0
+cls
+vprint 0 0 "MC6847 VIDEO DISPLAY GENERATOR"
+vprint 0 2 "32 X 16 TEXT, GREEN ON DARK GREEN"
+vprint 0 4 "SEMIGRAPHICS BLOCKS BELOW:"
+for c = 0 to 8
+  v = c + c
+  v = v + v
+  v = v + v
+  v = v + v
+  v = v + 143          ; bit 7 + color + all four quadrants
+  a = c + c
+  a = a + a
+  a = a + 192          ; row 6 starts at $80C0, 4 cells per block
+  poke 128 a v
+  a = a + 1
+  poke 128 a v
+  v = v - 5            ; quadrants 1010
+  a = a + 1
+  poke 128 a v
+  a = a + 1
+  poke 128 a v
+end
+label main
+  vdg 0
+  wait 60
+  vdg 16               ; other color set
+  wait 60
+  goto main`;
+EX["Chip showcase: TMS9918A and AY-3-8910"]=`; CHIP SHOWCASE: TMS9918A video + AY-3-8910 sound (pick the TMS9918A display)
+; VIDEO: Graphics II (full 256x192), Graphics I, Text 40x24, Multicolor, doubled sprites,
+;        collision flag, fifth-sprite flag, status register, backdrop color
+; SOUND: 3 tones, noise, mixer, envelope shapes 9/14/12/10, arpeggio, port A keyboard
+; Arrow keys (read through AY port A) move the blue diamond.
+dim mel 16
+dim arp 4
+mel[0] = 60
+mel[1] = 63
+mel[2] = 67
+mel[3] = 63
+mel[4] = 58
+mel[5] = 62
+mel[6] = 65
+mel[7] = 62
+mel[8] = 56
+mel[9] = 60
+mel[10] = 63
+mel[11] = 60
+mel[12] = 55
+mel[13] = 58
+mel[14] = 62
+mel[15] = 67
+arp[0] = 0
+arp[1] = 3
+arp[2] = 7
+arp[3] = 12
+t = 0
+st = 0
+stg = 0
+tf = 0
+dc = 0
+cd = 0
+es = 9
+bp = 18
+n = 60
+x0 = 40
+y0 = 40
+dx0 = 2
+dy0 = 1
+x1 = 180
+y1 = 120
+ay 7 0x38             ; mixer: tones on, noise off
+ay 8 16               ; channel A volume from the envelope
+ay 9 12
+ay 10 9
+ay 11 0x80            ; envelope period
+ay 12 0x03
+vaddr 0x38 0x00       ; sprite patterns at VRAM $3800: ball, diamond
+vdata 0x3C
+vdata 0x7E
+vdata 0xFF
+vdata 0xFF
+vdata 0xFF
+vdata 0xFF
+vdata 0x7E
+vdata 0x3C
+vdata 0x10
+vdata 0x38
+vdata 0x7C
+vdata 0xFE
+vdata 0x7C
+vdata 0x38
+vdata 0x10
+vdata 0x00
+gosub st0
+label main
+  t = t + 1
+  gosub music
+  gosub sprites
+  tf = tf + 1
+  if tf == 360         ; change video mode every 6 seconds
+    tf = 0
+    stg = stg + 1
+    stg = stg & 3
+    if stg == 0
+      gosub st0
+    end
+    if stg == 1
+      gosub st1
+    end
+    if stg == 2
+      gosub st2
+    end
+    if stg == 3
+      gosub st3
+    end
+  end
+  wait 1
+  goto main
+
+; ---- sound: lead, bass, arpeggio and noise hi-hat ----
+label music
+  m = t & 7
+  if m == 0
+    i = st & 15
+    n = mel[i]
+    note 0 n           ; lead on channel A
+    ay 13 es           ; restart the envelope shape
+    m2 = i & 12
+    b = mel[m2]
+    b = b - 24
+    note 1 b           ; bass on channel B
+    m2 = i & 3
+    if m2 == 2
+      ay 7 0x18        ; noise on channel C
+      ay 6 6
+      dc = 3
+    end
+    st = st + 1
+  end
+  m = t & 3
+  o = arp[m]
+  x = n + o
+  note 2 x             ; arpeggio on channel C
+  if dc > 0
+    dc = dc - 1
+    if dc == 0
+      ay 7 0x38
+      ay 8 16
+    end
+  end
+  if cd > 0
+    cd = cd - 1
+  end
+  return
+
+; noise explosion with envelope decay and a new backdrop color
+label boom
+  cd = 40
+  ay 7 0x07
+  ay 6 bp
+  ay 13 0
+  dc = 14
+  r = rnd & 7
+  r = r + 2
+  vreg 7 r
+  return
+
+; ---- sprites: one bounces, one follows the arrows ----
+label sprites
+  ayget k 14
+  d = k & 1
+  if d == 1
+    x1 = x1 - 2
+  end
+  d = k & 2
+  if d == 2
+    x1 = x1 + 2
+  end
+  d = k & 4
+  if d == 4
+    y1 = y1 - 2
+  end
+  d = k & 8
+  if d == 8
+    y1 = y1 + 2
+  end
+  x0 = x0 + dx0
+  y0 = y0 + dy0
+  if x0 > 240
+    dx0 = 0 - dx0
+    x0 = x0 + dx0
+  end
+  if y0 > 176
+    dy0 = 0 - dy0
+    y0 = y0 + dy0
+  end
+  vaddr 0x1B 0x00      ; sprite attribute table: y, x, pattern, color
+  vdata y0
+  vdata x0
+  vdata 0
+  vdata 11
+  vdata y1
+  vdata x1
+  vdata 1
+  vdata 5
+  if stg == 3          ; six sprites on one line: the fifth-sprite flag
+    xx = 30
+    for i = 0 to 6
+      vdata 150
+      vdata xx
+      vdata 0
+      vdata 15
+      xx = xx + 24
+    end
+  end
+  vdata 0xD0           ; end of sprite list
+  vstat s              ; status: bit 7 frame, bit 6 fifth sprite, bit 5 collision
+  d = s & 96
+  if d > 0
+    if cd == 0
+      gosub boom
+    end
+  end
+  return
+
+; ---- Graphics II: 256x192 bitmap ----
+label st0
+  es = 9
+  bp = 18
+  vreg 0 2
+  vreg 1 0xC1
+  vreg 2 6
+  vreg 3 0xFF
+  vreg 4 3
+  vreg 7 1
+  vaddr 0x18 0x00
+  for i = 0 to 3
+    for j = 0 to 255
+      vdata j
+    end
+    vdata 255
+  end
+  cls
+  for x = 0 to 255
+    plot x 0 15
+    plot x 191 15
+  end
+  for y = 0 to 192
+    plot 0 y 15
+    plot 255 y 15
+    plot y y 6
+  end
+  for c = 1 to 16
+    xs = c + c
+    xs = xs + xs
+    xs = xs + xs
+    xs = xs + xs
+    for y = 24 to 40
+      for k = 0 to 16
+        xx = xs + k
+        plot xx y c
+      end
+    end
+  end
+  return
+
+; ---- Graphics I: 32x24 tiles ----
+label st1
+  es = 14
+  bp = 12
+  vreg 0 0
+  vreg 1 0xC1
+  vreg 2 5
+  vreg 3 0x80
+  vreg 4 0
+  vreg 7 4
+  vaddr 0 0
+  vfont                ; load the character set into the pattern table
+  vaddr 0x20 0x00      ; color table: one byte per 8 characters
+  for i = 0 to 32
+    c = i & 15
+    c = c + c
+    c = c + c
+    c = c + c
+    c = c + c
+    c = c + 1
+    vdata c
+  end
+  vaddr 0x14 0x00      ; name table
+  vtext "TMS9918A GRAPHICS I MODE 32X24  "
+  for i = 0 to 23
+    gosub grow
+  end
+  return
+label grow
+  vtext "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+  return
+
+; ---- Text mode: 40x24, 6x8 cells ----
+label st2
+  es = 12
+  bp = 24
+  vreg 0 0
+  vreg 1 0xD0
+  vreg 2 2
+  vreg 4 0
+  vreg 7 0xF4
+  vaddr 0 0
+  vfont
+  hi = 8
+  lo = 0
+  for r = 0 to 24
+    vaddr hi lo
+    v = r + 48
+    vdata v
+    gosub trow
+    lo = lo + 40
+    if lo < 40
+      hi = hi + 1
+    end
+  end
+  return
+label trow
+  vtext " TMS9918A TEXT MODE, 40X24, 6X8 CELLS"
+  return
+
+; ---- Multicolor: 64x48 blocks of 4x4 pixels ----
+label st3
+  es = 10
+  bp = 4
+  vreg 0 0
+  vreg 1 0xC9
+  vreg 2 5
+  vreg 4 0
+  vreg 7 1
+  vaddr 0x14 0x00
+  for i = 0 to 3
+    for j = 0 to 255
+      vdata j
+    end
+    vdata 255
+  end
+  vaddr 0 0
+  for i = 0 to 8
+    for j = 0 to 255
+      v = rnd
+      vdata v
+    end
+    v = rnd
+    vdata v
+  end
+  return`;
+EX["AY-3-8910 music: Neon Rain"]=`; AY-3-8910 MUSIC: NEON RAIN, a procedural chiptune (works on any display)
+; A = lead: pentatonic random walk, vibrato, manual decay
+; B = buzz bass: tone off, envelope shape 8 whose period follows the note
+; C = arpeggio chords and drums (kick = pitch sweep, snare and hat = noise)
+; 16 bars: chords Am F C G, four sections, drums build up, tempo rises in the last section
+dim pent 8
+dim root 4
+dim third 4
+dim arp 4
+dim rh 16
+dim bs 16
+dim dr 16
+dim vib 8
+data pent 69 72 74 76 79 81 84 86
+data root 45 41 48 43
+data third 3 4 4 4
+data rh 1 0 1 1 0 1 0 1 1 0 1 0 1 1 0 1
+data bs 1 0 0 1 0 0 2 0 1 0 0 1 0 2 0 1
+data dr 1 0 3 0 2 0 3 0 1 0 3 1 2 0 3 3
+data vib 0 1 1 2 1 1 0 0
+t = 0
+st = 0
+bar = 0
+tempo = 6
+tc = 0
+li = 3
+lv = 0
+bt = 0
+dk = 0
+dt = 0
+rt = 45
+cl = 0
+ay 7 0x3A             ; mixer: tone A and C on, tone B off, noise off
+ay 8 0
+ay 9 0
+ay 10 0
+ay 6 8
+ay 12 0
+cls
+label main
+  tc = tc + 1
+  if tc >= tempo
+    tc = 0
+    gosub step
+  end
+  gosub frame
+  wait 1
+  goto main
+
+; ---- one sixteenth note ----
+label step
+  s = st & 15
+  if s == 0
+    gosub newbar
+  end
+  gosub lead
+  gosub bass
+  gosub drum
+  st = st + 1
+  return
+
+; chord, section and tempo for a new bar
+label newbar
+  cb = bar & 3
+  rt = root[cb]
+  th = third[cb]
+  arp[0] = 0
+  arp[1] = th
+  arp[2] = 7
+  arp[3] = 12
+  sec = bar & 12
+  tempo = 6
+  if sec == 12
+    tempo = 5
+  end
+  bar = bar + 1
+  bar = bar & 15
+  return
+
+; channel A: random walk on the pentatonic scale
+label lead
+  h = rh[s]
+  if h == 1
+    r = rnd & 3
+    if r == 0
+      if li > 0
+        li = li - 1
+      end
+    end
+    if r == 1
+      if li < 6
+        li = li + 1
+      end
+    end
+    if r == 2
+      if li < 5
+        li = li + 2
+      end
+    end
+    ln = pent[li]
+    if sec > 7
+      ln = ln + 12
+    end
+    note 0 ln
+    ayget pl 0
+    lv = 13
+    vi = 0
+  end
+  return
+
+; channel B: buzz bass, envelope period = tone period / 16
+label bass
+  b = bs[s]
+  if b > 0
+    bn = rt
+    if b == 2
+      bn = rt + 12
+    end
+    note 1 bn
+    ayget bl 2
+    ayget bh 3
+    q = 0
+    while bl > 15
+      bl = bl - 16
+      q = q + 1
+    end
+    e = bh + bh
+    e = e + e
+    e = e + e
+    e = e + e
+    e = e + q
+    ay 11 e
+    ay 13 8
+    ay 9 16
+    bt = 10
+  end
+  return
+
+; drum pattern, with a snare fill at the end of every bar
+label drum
+  d = dr[s]
+  if sec == 0
+    if d == 2
+      d = 0
+    end
+  end
+  if s == 15
+    d = 2
+  end
+  if d > 0
+    dk = d
+    dt = 0
+  end
+  return
+
+; ---- every frame: envelopes, vibrato, arpeggio, drums, meters ----
+label frame
+  m = t & 3
+  if m == 0
+    if lv > 0
+      lv = lv - 1
+    end
+  end
+  ay 8 lv
+  vo = vib[vi]
+  pl2 = pl + vo
+  if pl2 < pl
+    pl2 = pl
+  end
+  ay 0 pl2
+  vi = vi + 1
+  vi = vi & 7
+  if bt > 0
+    bt = bt - 1
+    if bt == 0
+      ay 9 0
+    end
+  end
+  if dk == 0
+    ay 7 0x3A
+    o = arp[m]
+    an = rt + 24
+    an = an + o
+    note 2 an
+    ay 10 7
+    cl = 7
+  else
+    gosub drumfx
+  end
+  m = t & 1
+  if m == 0
+    gosub meters
+  end
+  t = t + 1
+  return
+
+label drumfx
+  if dk == 1            ; kick: tone sweeps down
+    ay 7 0x3A
+    ay 4 0
+    kp = dt + 1
+    ay 5 kp
+    kv = dt + dt
+    kv = kv + dt
+    kv = 15 - kv
+    ay 10 kv
+    cl = kv
+    dt = dt + 1
+    if dt > 4
+      dk = 0
+    end
+  end
+  if dk == 2            ; snare: noise burst
+    ay 7 0x1E
+    ay 6 9
+    kv = dt + dt
+    kv = 14 - kv
+    ay 10 kv
+    cl = kv
+    dt = dt + 1
+    if dt > 6
+      dk = 0
+    end
+  end
+  if dk == 3            ; hat: short high noise
+    ay 7 0x1E
+    ay 6 3
+    ay 10 8
+    cl = 8
+    dt = dt + 1
+    if dt > 1
+      dk = 0
+    end
+  end
+  return
+
+; level bars for the three channels
+label meters
+  y = 54
+  lvl = lv
+  c = 11
+  gosub drawbar
+  y = 57
+  lvl = bt
+  c = 9
+  gosub drawbar
+  y = 60
+  lvl = cl
+  c = 12
+  gosub drawbar
+  return
+label drawbar
+  lv2 = lvl + lvl
+  for x = 0 to 32
+    col = 0
+    if x < lv2
+      col = c
+    end
+    xx = x + 2
+    plot xx y col
+  end
+  return`;
+const EXMOD={"MC6845 CRTC text and hardware scroll":4,"Graphics on CRTC, TMS9918 and MC6847":[5,6,7],"TMS9918A sprites and Graphics II":6,"Chip showcase: TMS9918A and AY-3-8910":6,"MC6847 text and semigraphics":7};
+const PAL=["#000000","#1d2b53","#7e2553","#008751","#ab5236","#5f574f","#c2c3c7","#fff1e8","#ff004d","#ffa300","#ffec27","#00e436","#29adff","#83769c","#ff77a8","#ffccaa"];
+const $=id=>document.getElementById(id);
+
+const LIB={
+s:`label _blit
+; draw 8x8 sprite _sn at _sx,_sy in color _sc
+for _r = 0 to 8
+  _b = _spr[_sn][_r]
+  _py = _sy + _r
+  for _k = 0 to 8
+    _m = _b & 128
+    if _m == 128
+      _px = _sx + _k
+      plot _px _py _sc
+    end
+    _b = _b + _b
+  end
+end
+return`,
+t:`label _glyph
+; draw 3x5 character _c (0 = space) at _tx,_ty in color _tc
+for _r = 0 to 5
+  if _c < 32
+    _b = _fa[_c][_r]
+  else
+    _d = _c & 31
+    _b = _fb[_d][_r]
+  end
+  _py = _ty + _r
+  for _k = 0 to 3
+    _m = _b & 4
+    if _m == 4
+      _px = _tx + _k
+      plot _px _py _tc
+    end
+    _b = _b + _b
+  end
+end
+return`,
+g:`label _h
+; 3 pixel horizontal bar at _hx,_hy
+_px = _hx
+plot _px _hy _sc
+_px = _px + 1
+plot _px _hy _sc
+_px = _px + 1
+plot _px _hy _sc
+return
+label _vv
+; 3 pixel vertical bar at _hx,_hy
+_py = _hy
+plot _hx _py _sc
+_py = _py + 1
+plot _hx _py _sc
+_py = _py + 1
+plot _hx _py _sc
+return
+label _draw
+; seven segments from mask _g: a=1 b=2 c=4 d=8 e=16 f=32 g=64
+_m = _g & 1
+if _m == 1
+  _hx = _sx + 1
+  _hy = _sy
+  gosub _h
+end
+_m = _g & 2
+if _m == 2
+  _hx = _sx + 4
+  _hy = _sy + 1
+  gosub _vv
+end
+_m = _g & 4
+if _m == 4
+  _hx = _sx + 4
+  _hy = _sy + 5
+  gosub _vv
+end
+_m = _g & 8
+if _m == 8
+  _hx = _sx + 1
+  _hy = _sy + 8
+  gosub _h
+end
+_m = _g & 16
+if _m == 16
+  _hx = _sx
+  _hy = _sy + 5
+  gosub _vv
+end
+_m = _g & 32
+if _m == 32
+  _hx = _sx
+  _hy = _sy + 1
+  gosub _vv
+end
+_m = _g & 64
+if _m == 64
+  _hx = _sx + 1
+  _hy = _sy + 4
+  gosub _h
+end
+return
+label _seg2
+; show _sv as two hex digits: erase old, then draw new
+_n = _sv
+_v = 0
+while _n > 15
+  _n = _n - 16
+  _v = _v + 1
+end
+_sd = _sc
+_sc = 0
+_g = 127
+gosub _draw
+_sx = _sx + 6
+gosub _draw
+_sx = _sx - 6
+_sc = _sd
+_g = _sg[_v]
+gosub _draw
+_sx = _sx + 6
+_g = _sg[_n]
+gosub _draw
+return`};
+function expand(src){
+ const out=[],use={},L=src.split("\n");
+ L.forEach((raw,i)=>{
+  const body=raw.split(";")[0].trim(),cm=raw.includes(";")?" ;"+raw.slice(raw.indexOf(";")+1):"",w=body.split(/[\s,]+/),k=w[0].toLowerCase();
+  const put=a=>a.forEach((s,j)=>out.push([j?s:s+cm,i]));
+  let m;
+  if(k==="def"&&w.length===10&&w[1]!=="="){put(w.slice(2).map((v,r)=>"_spr["+w[1]+"]["+r+"] = "+v))}
+  else if(k==="sprite"&&w.length===5&&w[1]!=="="){use.s=1;put(["_sn = "+w[1],"_sx = "+w[2],"_sy = "+w[3],"_sc = "+w[4],"gosub _blit"])}
+  else if(k==="seg"&&w.length===5&&w[1]!=="="){use.g=1;put(["_sx = "+w[1],"_sy = "+w[2],"_sc = "+w[3],"_sv = "+w[4],"gosub _seg2"])}
+  else if(k==="print"&&(m=/^print[\s,]+(\S+?)[\s,]+(\S+?)[\s,]+(\S+?)[\s,]+"([^"]*)"/i.exec(body))){use.t=1;
+   const a=["_tx = "+m[1],"_ty = "+m[2],"_tc = "+m[3]];
+   for(const ch of m[4].toUpperCase()){const c=ch.charCodeAt(0);a.push("_c = "+(c>=32&&c<96?c-32:0),"gosub _glyph","_tx = _tx + 4")}
+   put(a)}
+  else if(k==="tprint"&&(m=/^tprint[\s,]+"([^"]*)"/i.exec(body))){put([...m[1]].map(ch=>"crtc 31 "+ch.charCodeAt(0)))}
+  else if(k==="vprint"&&(m=/^vprint[\s,]+(\d+)[\s,]+(\d+)[\s,]+"([^"]*)"/i.exec(body))){const base=0x8000+(+m[2])*32+(+m[1]);put([...m[3].toUpperCase()].map((ch,j)=>{const c=ch.charCodeAt(0),cd=c>=64&&c<96?c-64:c>=32&&c<64?c:32,ad=base+j;return "poke "+(ad>>8)+" "+(ad&255)+" "+cd}))}
+  else if(k==="data"&&w.length>2&&w[1]!=="="){put(w.slice(2).map((v,i)=>w[1]+"["+i+"] = "+v))}
+  else if(k==="vtext"&&(m=/^vtext[\s,]+"([^"]*)"/i.exec(body))){put([...m[1].toUpperCase()].map(ch=>"vdata "+ch.charCodeAt(0)))}
+  else out.push([raw,i]);
+ });
+ const lib=[];if(use.s)lib.push(LIB.s);if(use.t)lib.push(LIB.t);if(use.g)lib.push(LIB.g);
+ if(lib.length)("stop\n; built-in routines used by sprite, print and seg\n"+lib.join("\n")).split("\n").forEach((s,j)=>out.push([s,L.length+j]));
+ return out}
+function compile(src){
+ const code=[],vars={},st=[];let nv=0;
+ const e=(...b)=>code.push(...b);
+ const V=n=>vars[n]??(vars[n]=0x4000+nv++);
+ const arrs={_spr:{pg:0x73,sh:3,two:1},_fa:{pg:0x70,sh:3,two:1},_fb:{pg:0x71,sh:3,two:1},_sg:{pg:0x72,sh:0,two:0}},labs={},fix=[];let na=0x50;
+ const AR=n=>{if(!(n in arrs))throw Error("unknown array "+n);return arrs[n]};
+ const map=[];LMAP=map;
+ const adr=t=>{const m=t.split(/[\[\]]+/),a=AR(m[0]);
+  if(m.length===4){if(!a.two)throw Error(m[0]+" has one index");ld(m[2]);e(0x4F);ld(m[1]);for(let q=0;q<a.sh;q++)e(0x87);e(0x81)}
+  else{if(a.two)throw Error(m[0]+" needs two indexes");ld(m[1])}
+  e(0x6F,0x26,a.pg)};
+ const ld=t=>{
+  if(t==="rnd")e(0xDB,1);
+  else if(/^(\d+|0x[0-9a-f]+)$/i.test(t))e(0x3E,t&255);
+  else if(/^[a-z_]\w*\[\w+\](\[\w+\])?$/i.test(t)){adr(t);e(0x7E)}
+  else if(/^[a-z_]\w*$/i.test(t)){const a=V(t);e(0x3A,a&255,a>>8)}
+  else throw Error("bad operand "+t)};
+ const ex=t=>{
+  if(t.length===1)ld(t[0]);
+  else if(t.length===3&&"+-&|^".includes(t[1])){ld(t[2]);e(0x47);ld(t[0]);e({"+":0x80,"-":0x90,"&":0xA0,"|":0xB0,"^":0xA8}[t[1]])}
+  else throw Error("bad expression")};
+ const patch=(p,a)=>{code[p]=a&255;code[p+1]=a>>8};
+ const jp=op=>{e(op,0,0);return code.length-2};
+ const cond=(a,o,b)=>{let j;
+  if(o==="<"||o===">="){ld(b);e(0x47);ld(a);e(0xB8);j=o==="<"?0xD2:0xDA}
+  else if(o===">"||o==="<="){ld(a);e(0x47);ld(b);e(0xB8);j=o===">"?0xD2:0xDA}
+  else if(o==="=="||o==="!="){ld(b);e(0x47);ld(a);e(0xB8);j=o==="=="?0xC2:0xCA}
+  else throw Error("bad comparison");
+  return jp(j)};
+ expand(src).forEach(([raw,i])=>{try{
+  {const bd=raw.split(";")[0].trim(),cm=raw.includes(";")?raw.slice(raw.indexOf(";")+1).trim():"";if(bd)map.push({a:code.length,n:i+1,s:bd,c:cm});else if(cm)map.push({a:code.length,c:cm})}
+  const w=raw.split(";")[0].replace(/,/g," ").match(/[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|==|!=|<=|>=|[-+&|^<>=\[\]]/g);
+  const t=w&&[];if(w)for(let q=0;q<w.length;q++){if(w[q+1]==="["&&w[q+3]==="]"){if(w[q+4]==="["&&w[q+6]==="]"){t.push(w[q]+"["+w[q+2]+"]["+w[q+5]+"]");q+=6}else{t.push(w[q]+"["+w[q+2]+"]");q+=3}}else t.push(w[q])}
+  if(!t)return;
+  const k=t[0].toLowerCase();
+  if(t[1]==="="){ex(t.slice(2));const am=/\[/.test(t[0]);
+   if(am){e(0x47);adr(t[0]);e(0x70)}else{const a=V(t[0]);e(0x32,a&255,a>>8)}}
+  else if(MOD.assist&&k==="plot"){ld(t[1]);e(0xD3,10);ld(t[2]);e(0xD3,11);ld(t[3]);e(0xD3,12)}
+  else if(MOD.assist&&k==="get"){ld(t[2]);e(0xD3,10);ld(t[3]);e(0xD3,11);e(0xDB,12);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(MOD.assist&&k==="cls"){e(0x3E,0,0xD3,13)}
+  else if(MOD.assist&&k==="fill"){ld(t[1]);e(0xD3,13)}
+  else if(k==="plot"){if(t.some(s=>s.includes("[")))throw Error("plot needs numbers or plain variables, not array items");
+   ld(t[2]);e(0xE6,MOD.ym,0x6F,0x26,0,...Array(MOD.sw).fill(0x29));
+   ld(t[1]);e(0xE6,MOD.xm,0x85,0x6F,0x7C,0xF6,0x80,0x67);
+   ld(t[3]);e(0xE6,15,0x77)}
+  else if(k==="key"){e(0xDB,0);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="cls"){e(0x21,0,0x80);const s=code.length;e(0x36,0,0x23,0x7C,0xFE,MOD.hi,0xC2,s&255,s>>8)}
+  else if(k==="wait"){ld(t[1]);e(0x47,0x76,0x10,0xFD)}
+  else if(k==="while"){const s=code.length;st.push({k:"w",s,j:cond(t[1],t[2],t[3])})}
+  else if(k==="if"){st.push({k:"i",j:cond(t[1],t[2],t[3])})}
+  else if(k==="else"){const b=st.pop();if(!b||b.k!=="i")throw Error("else without if");const j=jp(0xC3);patch(b.j,code.length);st.push({k:"e",j})}
+  else if(k==="end"){const b=st.pop();if(!b)throw Error("end without block");if(b.k==="f"){const a=V(b.v);e(0x3A,a&255,a>>8,0x3C,0x32,a&255,a>>8)}if(b.k==="w"||b.k==="f")e(0xC3,b.s&255,b.s>>8);patch(b.j,code.length)}
+  else if(k==="dim"){const d1=+t[2],d2=t[3]?+t[3]:0;if(!(d1>0)||d1*(d2||1)>256)throw Error("array too big (256 items max)");
+   if(d2){const sh=Math.log2(d2);if(!Number.isInteger(sh))throw Error("second size must be 1, 2, 4, 8, 16, 32, 64 or 128");arrs[t[1]]={pg:na++,sh,two:1}}else arrs[t[1]]={pg:na++,sh:0,two:0}}
+  else if(k==="label"){labs[t[1]]=code.length}
+  else if(k==="goto"||k==="gosub"){e(k==="goto"?0xC3:0xCD,0,0);fix.push([code.length-2,t[1]])}
+  else if(k==="return"){e(0xC9)}
+  else if(k==="for"){const a=V(t[1]);ld(t[3]);e(0x32,a&255,a>>8);const s=code.length;st.push({k:"f",s,v:t[1],j:cond(t[1],"<",t[5])})}
+  else if(k==="inc"||k==="dec"){const a=V(t[1]);ld(t[1]);e(k==="inc"?0x3C:0x3D,0x32,a&255,a>>8)}
+  else if(k==="fill"){ld(t[1]);e(0xE6,15,0x47,0x21,0,0x80);const s=code.length;e(0x70,0x23,0x7C,0xFE,MOD.hi,0xC2,s&255,s>>8)}
+  else if(k==="get"){ld(t[3]);e(0xE6,MOD.ym,0x6F,0x26,0,...Array(MOD.sw).fill(0x29));ld(t[2]);e(0xE6,MOD.xm,0x85,0x6F,0x7C,0xF6,0x80,0x67,0x7E);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="beep"){ld(t[1]);e(0xD3,2)}
+  else if(k==="crtc"){ld(t[1]);e(0xD3,3);ld(t[2]);e(0xD3,4)}
+  else if(k==="crtcget"){ld(t[2]);e(0xD3,3,0xDB,4);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="tcolor"){ld(t[1]);e(0xD3,5)}
+  else if(k==="locate"){ld(t[1]);e(0xD3,7);ld(t[2]);e(0xD3,8)}
+  else if(k==="thex"){ld(t[1]);e(0xD3,6)}
+  else if(k==="tcls"){e(0xD3,9)}
+  else if(k==="poke"){ld(t[2]);e(0x6F);ld(t[1]);e(0x67);ld(t[3]);e(0x77)}
+  else if(k==="peek"){ld(t[3]);e(0x6F);ld(t[2]);e(0x67,0x7E);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="vreg"){ld(t[2]);e(0xD3,15);ld(t[1]);e(0xF6,0x80,0xD3,15)}
+  else if(k==="vaddr"){ld(t[2]);e(0xD3,15);ld(t[1]);e(0xF6,0x40,0xD3,15)}
+  else if(k==="vdata"){ld(t[1]);e(0xD3,14)}
+  else if(k==="vdg"){ld(t[1]);e(0xD3,16)}
+  else if(k==="vbase"){ld(t[1]);e(0xD3,17)}
+  else if(k==="ay"){ld(t[1]);e(0xD3,18);ld(t[2]);e(0xD3,19)}
+  else if(k==="ayget"){ld(t[2]);e(0xD3,18,0xDB,19);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="note"){ld(t[1]);e(0xD3,20);ld(t[2]);e(0xD3,21)}
+  else if(k==="vstat"){e(0xDB,15);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="vget"){e(0xDB,14);const a=V(t[1]);e(0x32,a&255,a>>8)}
+  else if(k==="vrd"){ld(t[2]);e(0xD3,15);ld(t[1]);e(0xD3,15)}
+  else if(k==="vfont"){e(0xD3,22)}
+  else if(k==="stop"){const h=code.length;e(0x76,0xC3,h&255,h>>8)}
+  else throw Error("unknown statement "+t[0]);
+ }catch(x){throw Error("line "+(i+1)+": "+x.message)}});
+ if(st.length)throw Error("missing end");
+ for(const [p,n] of fix){if(!(n in labs))throw Error("unknown label "+n);patch(p,labs[n])}
+ LINFO="; variables: "+(Object.entries(vars).map(([k,v])=>k+"=$"+v.toString(16).toUpperCase()).join(" ")||"none")+"\n; arrays: "+(Object.entries(arrs).map(([k,v])=>k+"=$"+(v.pg*256).toString(16).toUpperCase()).join(" ")||"none")+"\n; display: "+MOD.c+", video RAM $8000, stride "+(1<<MOD.sw)+" bytes per row\n; stack below $8000, ports: 0 keys, 1 random, 2 beep";
+ const h=code.length;e(0x76,0xC3,h&255,h>>8);
+ return code}
+
+const MODS=[
+ {n:"Virtual 64x64",c:"Virtual display, 64x64, 16 colors",w:64,h:64,sw:6,xm:63,ym:63,hi:0x90,mono:0},
+ {n:"SSD1306 OLED 128x64",c:"SSD1306 0.96 in OLED, 128x64, monochrome, I2C or SPI",w:128,h:64,sw:7,xm:127,ym:63,hi:0xA0,mono:1,on:[190,230,255],off:[0,0,0]},
+ {n:"ST7735 TFT 128x160",c:"ST7735 1.8 in TFT, 128x160, color, SPI (16 palette colors here)",w:128,h:160,sw:7,xm:127,ym:255,hi:0xD0,mono:0},
+ {n:"Nokia 5110 PCD8544 84x48",c:"Nokia 5110 PCD8544 LCD, 84x48, monochrome, SPI",w:84,h:48,sw:7,xm:127,ym:63,hi:0xA0,mono:1,on:[25,45,30],off:[150,178,135]},
+ {n:"MC6845 CRTC text 80x25",c:"MC6845 / HD6845 / R6545 style CRTC with text RAM, default 80x25 cells of 8x8 (program it with crtc, locate, tprint)",w:64,h:64,sw:6,xm:63,ym:63,hi:0x90,mono:0,crtc:1},
+ {n:"MC6845 CRTC graphics 128x64",c:"MC6845 CRTC addressing pixel RAM: R1 x 8 pixels wide, R6 x (R9+1) tall, R12/R13 scroll, 16 colors",w:128,h:64,sw:7,xm:127,ym:255,hi:0xA0,mono:0,crtc:2},
+ {n:"TMS9918A VDP 256x192 + border",c:"TMS9918A VDP: 256x192 plus border, 16 colors, Graphics I/II, Text 40x24, Multicolor, 32 sprites, status flags, 16 KB VRAM",w:272,h:208,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"tms"},
+ {n:"MC6847 VDG 256x192",c:"MC6847 VDG: text, semigraphics and 8 graphics modes, 4:3 (port 16 mode, port 17 video base)",w:256,h:192,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"vdg"}];
+let MOD=MODS[0];
+const mem=new Uint8Array(65536);
+const GL={" ":"00000","0":"75557","1":"26227","2":"71747","3":"71717","4":"55711","5":"74717","6":"74757","7":"71111","8":"75757","9":"75717",":":"02020",".":"00002","-":"00700","+":"02720","!":"22202","?":"71202",",":"00024","=":"07070","/":"11244",A:"25755",B:"65656",C:"34443",D:"65556",E:"74647",F:"74644",G:"34553",H:"55755",I:"72227",J:"11152",K:"55655",L:"44447",M:"57755",N:"65555",O:"25552",P:"65644",Q:"25573",R:"65655",S:"34216",T:"72222",U:"55557",V:"55552",W:"55775",X:"55255",Y:"55222",Z:"71247"};
+const ROM=new Uint8Array(0x300);
+for(let c=32;c<96;c++){const g=GL[String.fromCharCode(c)]||"00000";for(let r=0;r<5;r++)ROM[(c-32)*8+r]=parseInt(g[r],8)}
+;[0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F,0x77,0x7C,0x39,0x5E,0x79,0x71].forEach((v,i)=>ROM[0x200+i]=v);
+let A,B,H,L,PC,fz,fc,halted,keys=0,bad=null,cyc=0,busy=0,SP=0x8000,Cr=0,actx=null,lastBeep=0,LMAP=[],LINFO="";
+const BUDGET=Math.round(4e6/60);
+const T={0x00:4,0x3E:7,0x3A:13,0x32:13,0x47:4,0x6F:4,0x67:4,0x7C:4,0x26:7,0x21:10,0x23:6,0x29:11,0x77:7,0x36:10,0x80:4,0x85:4,0x90:4,0xA0:4,0xB8:4,0xE6:7,0xF6:7,0xFE:7,0xC3:10,0xC2:10,0xCA:10,0xD2:10,0xDA:10,0x10:13,0xDB:11,0x76:4,0x7E:7,0x70:7,0xCD:17,0xC9:10,0x3C:4,0x3D:4,0x4F:4,0x81:4,0x87:4,0xB0:4,0xA8:4,0xD3:11};
+function boot(code){mem.fill(0);mem.set(code,0);mem.set(ROM,0x7000);crtcReset();tmsReset();A=B=H=L=PC=fz=fc=Cr=0;halted=false;bad=null;cyc=0;SP=0x8000}
+function step(){
+ const n=()=>mem[PC++&65535],nn=()=>{const l=n();return l|n()<<8};
+ const op=n();cyc+=T[op]||4;
+ switch(op){
+ case 0x00:break;
+ case 0x3E:A=n();break;
+ case 0x3A:A=mem[nn()];break;
+ case 0x32:mem[nn()]=A;break;
+ case 0x47:B=A;break;
+ case 0x6F:L=A;break;
+ case 0x67:H=A;break;
+ case 0x7C:A=H;break;
+ case 0x26:H=n();break;
+ case 0x21:L=n();H=n();break;
+ case 0x23:{const v=((H<<8|L)+1)&65535;H=v>>8;L=v&255;break}
+ case 0x29:{const v=(H<<8|L)*2;fc=+(v>65535);H=(v>>8)&255;L=v&255;break}
+ case 0x77:mem[H<<8|L]=A;break;
+ case 0x36:mem[H<<8|L]=n();break;
+ case 0x80:case 0x81:case 0x85:case 0x87:{const v=A+(op===0x80?B:op===0x81?Cr:op===0x85?L:A);fc=+(v>255);A=v&255;fz=+(A===0);break}
+ case 0x90:{const v=A-B;fc=+(v<0);A=v&255;fz=+(A===0);break}
+ case 0xA0:A&=B;fz=+(A===0);fc=0;break;
+ case 0xE6:A&=n();fz=+(A===0);fc=0;break;
+ case 0xF6:A|=n();fz=+(A===0);fc=0;break;
+ case 0xB8:{const v=A-B;fc=+(v<0);fz=+((v&255)===0);break}
+ case 0xFE:{const v=A-n();fc=+(v<0);fz=+((v&255)===0);break}
+ case 0xC3:PC=nn();break;
+ case 0xC2:{const t=nn();if(!fz)PC=t;break}
+ case 0xCA:{const t=nn();if(fz)PC=t;break}
+ case 0xD2:{const t=nn();if(!fc)PC=t;break}
+ case 0xDA:{const t=nn();if(fc)PC=t;break}
+ case 0x10:{const d=n();B=(B-1)&255;if(B)PC=(PC+(d<<24>>24))&65535;else cyc-=5;break}
+ case 0xDB:{const p=n();A=p===0?keys:p===1?(Math.random()*256|0):p===4?(crSel>=12&&crSel<=17?CR[crSel]:0):p===12?assistGet():p===14?tmsRead():p===15?tmsStatus():p===19?ayRead():0;break}
+ case 0x3C:A=(A+1)&255;fz=+(A===0);break;
+ case 0x3D:A=(A-1)&255;fz=+(A===0);break;
+ case 0x4F:Cr=A;break;
+ case 0xB0:A|=B;fz=+(A===0);fc=0;break;
+ case 0xA8:A^=B;fz=+(A===0);fc=0;break;
+ case 0xD3:{const p=n();if(p===2)beep(A);else crtcOut(p,A);break}
+ case 0x7E:A=mem[H<<8|L];break;
+ case 0x70:mem[H<<8|L]=B;break;
+ case 0xCD:{const t=nn();SP=(SP-2)&65535;mem[SP]=PC&255;mem[SP+1]=PC>>8;PC=t;break}
+ case 0xC9:PC=mem[SP]|mem[SP+1]<<8;SP=(SP+2)&65535;break;
+ case 0x76:halted=true;break;
+ default:bad="illegal opcode 0x"+op.toString(16)+" at 0x"+((PC-1)&65535).toString(16);halted=true}
+}
+
+const DIS={0x00:"NOP|do nothing",0x3E:"LD A,%n|A = number",0x3A:"LD A,(%w)|A = variable",0x32:"LD (%w),A|store A in variable",0x47:"LD B,A|B = A (second operand)",0x4F:"LD C,A|C = A (column index)",0x6F:"LD L,A|L = A (low address byte)",0x67:"LD H,A|H = A",0x7C:"LD A,H|A = H",0x26:"LD H,%n|H = page (high address byte)",0x21:"LD HL,%w|HL = address",0x23:"INC HL|next address",0x29:"ADD HL,HL|HL = HL * 2",0x77:"LD (HL),A|write A to memory",0x70:"LD (HL),B|write B to memory",0x7E:"LD A,(HL)|read memory into A",0x36:"LD (HL),%n|write number to memory",0x80:"ADD A,B|A = A + B",0x81:"ADD A,C|A = A + C",0x85:"ADD A,L|A = A + L",0x87:"ADD A,A|A = A * 2",0x90:"SUB B|A = A - B",0xA0:"AND B|A = A and B",0xA8:"XOR B|A = A xor B",0xB0:"OR B|A = A or B",0xB8:"CP B|compare A with B",0xE6:"AND %n|mask bits of A",0xF6:"OR %n|set bits in A",0xFE:"CP %n|compare A with number",0x3C:"INC A|A = A + 1",0x3D:"DEC A|A = A - 1",0xC3:"JP %w|jump",0xC2:"JP NZ,%w|jump if not equal",0xCA:"JP Z,%w|jump if equal",0xD2:"JP NC,%w|jump if no carry (A >= B)",0xDA:"JP C,%w|jump if carry (A < B)",0xCD:"CALL %w|call subroutine",0xC9:"RET|return from subroutine",0x10:"DJNZ %e|B = B - 1, loop until zero",0xDB:"IN A,(%n)|read port (0 keys, 1 random)",0xD3:"OUT (%n),A|write port (2 beep)",0x76:"HALT|wait for next frame"};
+function dis(c,a){const f=(DIS[c[a]]||"DB %n|unknown").split("|");let len=1;
+ const t=f[0].replace("%n",()=>{len=2;return "$"+hx(c[a+1],2)}).replace("%w",()=>{len=3;return "$"+hx(c[a+1]|c[a+2]<<8,4)}).replace("%e",()=>{len=2;return "$"+hx((a+2+(c[a+1]<<24>>24))&65535,4)});
+ return {t,d:f[1]||"",len}}
+function listing(c){
+ const out=[LINFO,""],tail=c.length-4;
+ const dump=(from,to)=>{for(let a=from;a<to;){const d=dis(c,a),b=[...c.slice(a,a+d.len)].map(x=>hx(x,2)).join(" ");out.push(hx(a,4)+"  "+b.padEnd(9)+" "+d.t.padEnd(18)+"; "+d.d);a+=d.len}};
+ LMAP.forEach((m,i)=>{
+  if(m.s===undefined){out.push("; "+m.c);return}
+  out.push("","; ZL line "+m.n+": "+m.s+(m.c?"   ; "+m.c:""));
+  dump(m.a,i+1<LMAP.length?LMAP[i+1].a:tail)});
+ out.push("","; end of program: halt loop");dump(tail,c.length);
+ return out.join("\n")}
+function beep(v){const now=performance.now();if(now-lastBeep<70)return;lastBeep=now;
+ try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();if(actx.state!=="running")actx.resume();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=110+v*12;g.gain.value=.05;o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+.08)}catch(x){}}
+const CR=new Uint8Array(32),HXD="0123456789ABCDEF";let crSel=0,upd=0,tattr=7,lcol=0,fr=0;
+/* MC6845-style CRTC: R0-R15 as the real chip, plus 6545 extras: R18/R19 update address, R31 update strobe.
+   Ports: 3 register select, 4 data (read R12-R17), 5 text attribute, 6 write hex byte, 7/8 locate col/row, 9 clear text.
+   Text RAM: characters at $A000, attributes at $B000, addressed by the CRTC memory address MA. */
+function crtcReset(){CR.fill(0);CR.set([113,80,90,143,31,6,25,28,0,7,0x66,7]);if(MOD.crtc===2){CR[1]=16;CR[6]=8}upd=0;tattr=7;mem.fill(32,0xA000,0xB000);mem.fill(7,0xB000,0xC000)}
+function tput(c){const a=upd&0xFFF;mem[0xA000+a]=c;mem[0xB000+a]=tattr;upd=(a+1)&0xFFF;CR[14]=upd>>8;CR[15]=upd&255}
+function crtcOut(p,v){
+ if(p>=10)return ioOut(p,v);
+ if(p===3)crSel=v&31;
+ else if(p===4){if(crSel===31)tput(v);else if(crSel===18)upd=(upd&255)|(v&15)<<8;else if(crSel===19)upd=(upd&0xF00)|v;else CR[crSel]=v}
+ else if(p===5)tattr=v;
+ else if(p===6){tput(HXD.charCodeAt(v>>4));tput(HXD.charCodeAt(v&15))}
+ else if(p===7)lcol=v;
+ else if(p===8){upd=(v*CR[1]+lcol)&0xFFF;CR[14]=upd>>8;CR[15]=upd&255}
+ else if(p===9){mem.fill(32,0xA000,0xB000);mem.fill(tattr,0xB000,0xC000);upd=0;CR[14]=0;CR[15]=0}}
+/* TMS9918A VDP and MC6847 VDG. Their pixel memory is not linear, so plot/get/cls/fill go through the pixel assist ports 10-13. */
+const vram=new Uint8Array(16384),VR=new Uint8Array(8);let vlat=-1,vad=0,vmode=13,vbase=0x80,ax=0,ay=0,vbuf=0,tmsStat=0;
+const TP=[[0,0,0],[0,0,0],[33,200,66],[94,220,120],[84,85,237],[125,118,252],[212,82,77],[66,235,245],[252,85,84],[255,121,120],[212,193,84],[230,206,128],[33,176,59],[201,91,186],[204,204,204],[255,255,255]];
+const VC=[[8,192,8],[232,232,48],[32,32,208],[208,32,32],[232,232,208],[32,208,208],[208,32,208],[232,112,32]];
+function tmsReset(){vram.fill(0);VR.set([2,0xC0,6,0xFF,3,0x36,7,1]);for(let i=0;i<768;i++)vram[0x1800+i]=i&255;vram.fill(0xF1,0x2000,0x3800);vram[0x1B00]=0xD0;vlat=-1;vad=0;vmode=13;vbase=0x80;vbuf=0;tmsStat=0;ayReset()}
+function ioOut(p,v){
+ if(p===10)ax=v;else if(p===11)ay=v;
+ else if(p===12){if(MOD.assist==="tms")tmsPlot(ax,ay,v);else vdgPlot(ax,ay,v)}
+ else if(p===13){if(MOD.assist==="tms")tmsFill(v);else vdgFill(v)}
+ else if(p===14){vram[vad&0x3FFF]=v;vbuf=v;vad=(vad+1)&0x3FFF}
+ else if(p===15){if(vlat<0)vlat=v;else{if(v&0x80)VR[v&7]=vlat;else{vad=vlat|((v&63)<<8);if(!(v&0x40)){vbuf=vram[vad];vad=(vad+1)&0x3FFF}}vlat=-1}}
+ else if(p===16)vmode=v;else if(p===17)vbase=v;
+ else if(p===18)aySel=v&15;
+ else if(p===19)ayWrite(v);
+ else if(p===20)ayNoteCh=v;
+ else if(p===21)ayNote(ayNoteCh,v);
+ else if(p===22)tmsFont()}
+function tmsRead(){const r=vbuf;vbuf=vram[vad&0x3FFF];vad=(vad+1)&0x3FFF;return r}
+function tmsStatus(){const s=tmsStat;tmsStat=0;vlat=-1;return s}
+function tmsFont(){const pb=(VR[4]&7)<<11;for(let n=32;n<96;n++)for(let y=0;y<8;y++){const gy=(y===0||y===7)?-1:(((y-1)*5/6)|0),b=gy<0?0:ROM[(n-32)*8+gy]&7;vram[(pb+n*8+y)&0x3FFF]=(((b&4)?0x30:0)|((b&2)?0x0C:0)|((b&1)?3:0))<<2}}
+function drawTms2(){
+ const d=img.data,on=VR[1]&0x40,m1=VR[1]&16,m2=VR[1]&8,m3=VR[0]&2,bd=TP[VR[7]&15],fb=new Uint8Array(49152),nb=(VR[2]&15)<<10;
+ if(on){
+  if(m1){const pb=(VR[4]&7)<<11,fg=VR[7]>>4,bg=VR[7]&15;
+   for(let y=0;y<192;y++)for(let c=0;c<40;c++){const n=vram[nb+(y>>3)*40+c],p=vram[pb+n*8+(y&7)];for(let b=0;b<6;b++)fb[y*256+8+c*6+b]=((p>>(7-b))&1)?fg:bg}}
+  else if(m2){const pb=(VR[4]&7)<<11;
+   for(let y=0;y<192;y++)for(let c=0;c<32;c++){const n=vram[nb+(y>>3)*32+c],p=vram[pb+n*8+((y>>3)&3)*2+((y&4)?1:0)];for(let b=0;b<8;b++)fb[y*256+c*8+b]=b<4?p>>4:p&15}}
+  else if(m3){const pt=VR[4]&3,ct=(VR[3]>>5)&3,pb=(VR[4]&4)?0x2000:0,cb=(VR[3]&0x80)?0x2000:0;
+   for(let y=0;y<192;y++)for(let c=0;c<32;c++){const n=vram[nb+(y>>3)*32+c],th=y>>6,p=vram[pb+(((th&pt)<<8)+n)*8+(y&7)],col=vram[cb+(((th&ct)<<8)+n)*8+(y&7)];for(let b=0;b<8;b++)fb[y*256+c*8+b]=((p>>(7-b))&1)?col>>4:col&15}}
+  else{const pb=(VR[4]&7)<<11;
+   for(let y=0;y<192;y++)for(let c=0;c<32;c++){const n=vram[nb+(y>>3)*32+c],p=vram[pb+n*8+(y&7)],col=vram[(VR[3]<<6)+(n>>3)];for(let b=0;b<8;b++)fb[y*256+c*8+b]=((p>>(7-b))&1)?col>>4:col&15}}
+  if(!m1){
+   const sa=(VR[5]&127)<<7,sp=(VR[6]&7)<<11,big=VR[1]&2,mag=VR[1]&1?2:1,hh=(big?16:8)*mag,occ=new Uint8Array(256),pa=new Uint8Array(256);
+   const top=a=>{let y0=(vram[a]+1)&255;if(y0>=224)y0-=256;return y0};
+   for(let line=0;line<192;line++){const vis=[];let fifth=-1;
+    for(let s=0;s<32;s++){const a=sa+s*4;if(vram[a]===0xD0)break;const y0=top(a);if(line>=y0&&line<y0+hh){if(vis.length<4)vis.push(s);else if(fifth<0)fifth=s}}
+    if(fifth>=0&&!(tmsStat&0x40))tmsStat=(tmsStat&0xA0)|0x40|fifth;
+    if(!vis.length)continue;occ.fill(0);pa.fill(0);
+    for(const s of vis){const a=sa+s*4,ly=((line-top(a))/mag)|0,nm=big?vram[a+2]&252:vram[a+2],cl=vram[a+3],x0=vram[a+1]-(cl&128?32:0);
+     for(let px=0;px<hh;px++){const x=x0+px;if(x<0||x>255)continue;const sx=(px/mag)|0;
+      if((vram[sp+nm*8+ly+(sx>=8?16:0)]>>(7-(sx&7)))&1){if(occ[x])tmsStat|=0x20;occ[x]=1;if((cl&15)&&!pa[x]){pa[x]=1;fb[line*256+x]=cl&15}}}}}}}
+ let o=0;for(let y=0;y<208;y++)for(let x=0;x<272;x++){const fx=x-8,fy=y-8;let q=bd;if(fx>=0&&fx<256&&fy>=0&&fy<192){const c=fb[fy*256+fx];if(c)q=TP[c]}d[o++]=q[0];d[o++]=q[1];d[o++]=q[2];d[o++]=255}
+ tmsStat|=0x80;cx.putImageData(img,0,0)}
+/* AY-3-8910 / YM2149: 3 tone channels, noise, mixer, volume, envelope (16 shapes), port A. Ports: 18 register select, 19 data, 20/21 note helper. */
+const AYR=new Uint8Array(16),AYCLK=1773400,AYV=[0,0.0100,0.0145,0.0211,0.0307,0.0455,0.0645,0.1073,0.1266,0.2050,0.2922,0.3720,0.5065,0.6350,0.8057,1],AYMASK=[255,15,255,15,255,15,31,255,31,31,31,255,255,15,255,255];
+const ayS={tc:[0,0,0],to:[0,0,0],nc:0,lf:1,ec:0,ep:0,acc:0,l:0,r:0};let aySel=0,ayNode=null,ayNoteCh=0;
+function ayReset(){AYR.fill(0);ayS.lf=1;ayS.ep=0;ayS.ec=0;ayS.nc=0;ayS.acc=0;ayS.tc.fill(0);ayS.to.fill(0);aySel=0}
+function ayWrite(v){AYR[aySel]=v&AYMASK[aySel];if(aySel===13){ayS.ep=0;ayS.ec=0}}
+function ayRead(){return aySel===14?((AYR[7]&64)?AYR[14]:keys):aySel===15?255:AYR[aySel]}
+function ayNote(ch,n){const f=440*Math.pow(2,(n-69)/12),p=Math.max(1,Math.min(4095,Math.round(AYCLK/16/f)));AYR[(ch%3)*2]=p&255;AYR[(ch%3)*2+1]=p>>8}
+function ayEnv(){const sh=AYR[13],C=sh&8,A=(sh&4)?1:0,L=(sh&2)?1:0,H=sh&1,p=ayS.ep;
+ if(p>=16&&(!C||H))return C?((A^L)?15:0):0;
+ const i=p&15,d1=A?1:-1,d=(p>>4)?(L?-d1:d1):d1;return d>0?i:15-i}
+function ayTick(){
+ for(let c=0;c<3;c++){const p=(((AYR[c*2+1]&15)<<8)|AYR[c*2])||1;if(++ayS.tc[c]>=p){ayS.tc[c]=0;ayS.to[c]^=1}}
+ const np=(AYR[6]&31)||1;if(++ayS.nc>=np){ayS.nc=0;ayS.lf=(ayS.lf>>1)|(((ayS.lf^(ayS.lf>>3))&1)<<16)}
+ const ep=((AYR[12]<<8)|AYR[11])||1;if(++ayS.ec>=ep){ayS.ec=0;if(ayS.ep<16)ayS.ep++;else if((AYR[13]&8)&&!(AYR[13]&1))ayS.ep=(ayS.ep+1)&31}}
+function ayOut(){const m=AYR[7],nb=ayS.lf&1,ev=ayEnv(),a=[0,0,0];
+ for(let c=0;c<3;c++){const amp=AYR[8+c],v=AYV[(amp&16)?ev:amp&15];a[c]=((ayS.to[c]|((m>>c)&1))&(nb|((m>>(c+3))&1)))?v:0}
+ return [(a[0]+0.7*a[1])*0.2,(a[2]+0.7*a[1])*0.2]}
+function ayRender(Lb,Rb){const step=AYCLK/16/actx.sampleRate;let l=ayS.l,r=ayS.r;
+ for(let i=0;i<Lb.length;i++){ayS.acc+=step;let n=0,sl=0,sr=0;while(ayS.acc>=1){ayS.acc-=1;ayTick();const o=ayOut();sl+=o[0];sr+=o[1];n++}if(n){l=sl/n;r=sr/n}Lb[i]=l;Rb[i]=r}ayS.l=l;ayS.r=r}
+function audioInit(){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();if(actx.state!=="running")actx.resume();
+ const u=actx.createBuffer(1,1,22050),us=actx.createBufferSource();us.buffer=u;us.connect(actx.destination);us.start(0);
+ if(!ayNode)ayNode=setInterval(ayPump,30)}catch(x){}}
+let aySched=0;
+function ayPump(){if(!actx||actx.state!=="running")return;const sr=actx.sampleRate,n=Math.round(sr*0.05);
+ if(aySched<actx.currentTime)aySched=actx.currentTime+0.06;
+ while(aySched<actx.currentTime+0.25){const b=actx.createBuffer(2,n,sr);ayRender(b.getChannelData(0),b.getChannelData(1));const s=actx.createBufferSource();s.buffer=b;s.connect(actx.destination);s.start(aySched);aySched+=n/sr}}
+const tmsOff=(x,y)=>(y>>3)*256+(x>>3)*8+(y&7),tmsPB=()=>(VR[4]&4)?0x2000:0,tmsCB=()=>(VR[3]&0x80)?0x2000:0;
+function tmsPlot(x,y,c){if(y>=192)return;const o=tmsOff(x,y),m=0x80>>(x&7);if(c&15){vram[tmsPB()+o]|=m;vram[tmsCB()+o]=((c&15)<<4)|(vram[tmsCB()+o]&15)}else vram[tmsPB()+o]&=~m}
+function tmsFill(c){const pb=tmsPB(),cb=tmsCB();vram.fill(c?0xFF:0,pb,pb+0x1800);vram.fill(c?((c&15)<<4)|1:0xF1,cb,cb+0x1800)}
+function vdgDims(){return [[64,64,2],[128,64,1],[128,64,2],[128,96,1],[128,96,2],[128,192,1],[128,192,2],[256,192,1]][(vmode>>1)&7]}
+function vdgPlot(x,y,c){if(!(vmode&1))return;const [w,h,b]=vdgDims();if(x>=w||y>=h)return;const a=(vbase<<8)+y*(w*b>>3)+((x*b)>>3),sh=b===2?6-2*(x&3):7-(x&7),mk=(b===2?3:1)<<sh;mem[a]=(mem[a]&~mk)|((b===2?c&3:c?1:0)<<sh)}
+function vdgFill(v){const base=vbase<<8;if(vmode&1){const [w,h,b]=vdgDims();mem.fill(b===2?(v&3)*0x55:v?255:0,base,base+(w*h*b>>3))}else mem.fill(v||32,base,base+512)}
+function assistGet(){
+ if(MOD.assist==="tms"){if(ay>=192)return 0;const o=tmsOff(ax,ay);return vram[tmsPB()+o]&(0x80>>(ax&7))?vram[tmsCB()+o]>>4:0}
+ if(!(vmode&1))return 0;const [w,h,b]=vdgDims();if(ax>=w||ay>=h)return 0;
+ const a=(vbase<<8)+ay*(w*b>>3)+((ax*b)>>3),sh=b===2?6-2*(ax&3):7-(ax&7);return (mem[a]>>sh)&(b===2?3:1)}
+function drawTms(){
+ const d=img.data,bd=TP[VR[7]&15],nb=(VR[2]&15)<<10,g2=VR[0]&2;
+ const put=(x,y,c)=>{if(x<0||x>255)return;const k=(y*256+x)*4,q=c?TP[c]:bd;d[k]=q[0];d[k+1]=q[1];d[k+2]=q[2];d[k+3]=255};
+ for(let y=0;y<192;y++)for(let tx=0;tx<32;tx++){
+  if(!(VR[1]&0x40)){for(let b=0;b<8;b++)put(tx*8+b,y,0);continue}
+  const n=vram[nb+(y>>3)*32+tx];let p,col;
+  if(g2){const i=(((y>>6)<<8)+n)*8+(y&7);p=vram[tmsPB()+i];col=vram[tmsCB()+i]}
+  else{p=vram[((VR[4]&7)<<11)+n*8+(y&7)];col=vram[(VR[3]<<6)+(n>>3)]}
+  for(let b=0;b<8;b++)put(tx*8+b,y,(p>>(7-b))&1?col>>4:col&15)}
+ if(VR[1]&0x40){
+  const sa=(VR[5]&127)<<7,sp=(VR[6]&7)<<11,big=VR[1]&2,mag=VR[1]&1?2:1,hh=(big?16:8)*mag;
+  const top=a=>{let y0=(vram[a]+1)&255;if(y0>=224)y0-=256;return y0};
+  for(let line=0;line<192;line++){const vis=[];
+   for(let s=0;s<32;s++){if(vram[sa+s*4]===0xD0)break;const y0=top(sa+s*4);if(line>=y0&&line<y0+hh){vis.push(s);if(vis.length===4)break}}
+   for(let j=vis.length-1;j>=0;j--){const a=sa+vis[j]*4,y0=top(a),ly=((line-y0)/mag)|0,nm=big?vram[a+2]&252:vram[a+2],cl=vram[a+3],x0=vram[a+1]-(cl&128?32:0);
+    for(let px=0;px<hh;px++){const sx=(px/mag)|0,byte=vram[sp+nm*8+ly+(sx>=8?16:0)];if(((byte>>(7-(sx&7)))&1)&&(cl&15))put(x0+px,line,cl&15)}}}}
+ cx.putImageData(img,0,0)}
+function drawVdg(){
+ const ag=vmode&1,css=(vmode>>4)&1,inv=(vmode>>5)&1,base=vbase<<8;let w=256,h=192,b=1;
+ if(ag){[w,h,b]=vdgDims()}
+ if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;img=cx.createImageData(w,h)}
+ cv.style.aspectRatio="4 / 3";cv.style.width="min(100%,320px)";
+ const d=img.data,pal=css*4,K=[0,0,0];
+ const put=(x,y,q)=>{const k=(y*w+x)*4;d[k]=q[0];d[k+1]=q[1];d[k+2]=q[2];d[k+3]=255};
+ if(ag){const rb=w*b>>3;for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=mem[base+y*rb+((x*b)>>3)],sh=b===2?6-2*(x&3):7-(x&7),p=(v>>sh)&(b===2?3:1);put(x,y,b===2?VC[pal+p]:p?VC[pal]:K)}}
+ else{const fg=css?VC[7]:VC[0],bg=css?[48,16,0]:[0,48,0];
+  for(let r=0;r<16;r++)for(let c=0;c<32;c++){const v=mem[base+r*32+c];
+   for(let y=0;y<12;y++)for(let x=0;x<8;x++){let q;
+    if(v&128){const sx=x<4?0:1,sy=y<6?0:1;q=(v>>(3-(sy*2+sx)))&1?VC[(v>>4)&7]:K}
+    else{const cd=v&63,gi=(cd<32?cd+64:cd)-32;let on=0;if(gi>=0&&gi<64)on=(mem[0x7000+gi*8+((y*5/12)|0)]>>(2-((x*3)>>3)))&1;if(((v>>6)&1)^inv)on^=1;q=on?fg:bg}
+    put(c*8+x,r*12+y,q)}}}
+ cx.putImageData(img,0,0)}
+function drawCrtcG(){
+ const cols=Math.min(CR[1],16)||1,ln=(CR[9]&31)+1,rows=Math.min(CR[6]&127,Math.max(1,256/ln|0))||1,W=cols*8,H=rows*ln;
+ if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;img=cx.createImageData(W,H);cv.style.aspectRatio=W+" / "+H;cv.style.width="min(100%,320px)"}
+ const d=img.data,st=((CR[12]&63)<<8|CR[13])*8;let o=0;
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++){const q=PR[mem[0x8000+((st+y*128+x)&0x7FFF)]&15];d[o++]=q[0];d[o++]=q[1];d[o++]=q[2];d[o++]=255}
+ cx.putImageData(img,0,0)}
+function drawCrtc(){
+ if(MOD.crtc===2)return drawCrtcG();
+ const cols=Math.min(CR[1],128)||1,ln=(CR[9]&31)+1,rows=Math.min(CR[6]&127,Math.max(1,480/ln|0))||1,W=cols*8,H=rows*ln;
+ if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;img=cx.createImageData(W,H);cv.style.aspectRatio=W+" / "+H;cv.style.width="min(100%,640px)"}
+ const d=img.data,st=((CR[12]&63)<<8|CR[13])&0xFFF,cur=((CR[14]&63)<<8|CR[15])&0xFFF,cm=(CR[10]>>5)&3,cs=CR[10]&31,ce=CR[11]&31;
+ fr++;const blink=cm===0||(cm===2&&(fr&8)>0)||(cm===3&&(fr&16)>0);
+ for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+  const a=(st+r*cols+c)&0xFFF,at=mem[0xB000+a],fg=PR[at&15],bg=PR[at>>4];
+  let g=mem[0xA000+a]&127;if(g>=97&&g<=122)g-=32;
+  const gi=g>=32&&g<96?g-32:-1,isc=a===cur&&blink;
+  for(let y=0;y<ln;y++){const gy=(y*5/ln)|0,bits=gi>=0?mem[0x7000+gi*8+gy]:0,inc=isc&&y>=cs&&y<=ce;
+   let o=((r*ln+y)*W+c*8)*4;
+   for(let x=0;x<8;x++){let on=(bits>>(2-((x*3)>>3)))&1;if(inc)on^=1;const q=on?fg:bg;d[o++]=q[0];d[o++]=q[1];d[o++]=q[2];d[o++]=255}}}
+ cx.putImageData(img,0,0)}
+const cv=$("cv"),cx=cv.getContext("2d");
+const PR=PAL.map(h=>[1,3,5].map(o=>parseInt(h.slice(o,o+2),16)));let img=null;
+function setMod(i){MOD=MODS[i];cv.width=MOD.w;cv.height=MOD.h;img=cx.createImageData(MOD.w,MOD.h);cv.style.aspectRatio=MOD.w+" / "+MOD.h;cv.style.width="min(100%,"+(MOD.w>=MOD.h?320:256)+"px)";$("cap").textContent=MOD.c}
+function draw(){if(MOD.crtc){drawCrtc();return}if(MOD.assist==="tms"){drawTms2();return}if(MOD.assist==="vdg"){drawVdg();return}const d=img.data,{w,h,sw,mono}=MOD;let o=0;for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=mem[0x8000+(y<<sw)+x]&15,c=mono?(v?MOD.on:MOD.off):PR[v];d[o++]=c[0];d[o++]=c[1];d[o++]=c[2];d[o++]=255}cx.putImageData(img,0,0)}
+const hx=(v,w)=>v.toString(16).toUpperCase().padStart(w,"0");
+let timer=null;
+function frame(){
+ halted=false;const c0=cyc;
+ while(cyc-c0<BUDGET&&!halted)step();
+ busy=Math.min(100,Math.round((cyc-c0)/BUDGET*100));
+ draw();
+ $("st").textContent=bad||`A=${hx(A,2)} B=${hx(B,2)} HL=${hx(H<<8|L,4)} PC=${hx(PC,4)}  Z=${fz} C=${fc}  ${busy}% of 4 MHz  audio ${actx?actx.state:"off"}`;
+ $("st").className=bad?"err":"";
+ if(bad)stop()}
+function stop(){clearInterval(timer);timer=null}
+function run(){
+ audioInit();
+ stop();
+ try{
+  const code=compile($("src").value);
+  boot(code);$("asm").textContent=listing(code);
+  $("hex").textContent=code.length+" bytes\n"+code.map(b=>hx(b,2)).join(" ");
+  timer=setInterval(frame,1000/60);
+ }catch(x){$("st").textContent=x.message;$("st").className="err"}}
+$("run").onclick=run;$("stop").onclick=stop;
+const sel=$("ex");
+Object.keys(EX).forEach(k=>sel.add(new Option(k,k)));
+sel.onchange=()=>{$("src").value=EX[sel.value];const w=EXMOD[sel.value],cur=MODS.indexOf(MOD);if(w){const al=[].concat(w);if(!al.includes(cur)){dsp.value=al[0];setMod(al[0])}}else if(MOD.crtc===1){dsp.value=0;setMod(0)}run()};
+$("src").value=EX["AY-3-8910 music: Neon Rain"];sel.value="AY-3-8910 music: Neon Rain";
+
+const KM={ArrowLeft:1,ArrowRight:2,ArrowUp:4,ArrowDown:8," ":16};
+addEventListener("keydown",e=>{if(KM[e.key]&&document.activeElement!==$("src")){keys|=KM[e.key];e.preventDefault()}});
+addEventListener("keyup",e=>{if(KM[e.key])keys&=~KM[e.key]});
+document.querySelectorAll("#pad button").forEach(b=>{
+ const m=+b.dataset.b;
+ b.onpointerdown=e=>{e.preventDefault();keys|=m};
+ ["pointerup","pointerleave","pointercancel"].forEach(ev=>b.addEventListener(ev,()=>{keys&=~m}));
+});
+const dsp=$("dsp");MODS.forEach((m,i)=>dsp.add(new Option(m.n,i)));
+dsp.onchange=()=>{setMod(+dsp.value);run()};
+setMod(0);
+$("snd").onclick=()=>{audioInit();beep(40)};
+run();
+</script></body></html>
