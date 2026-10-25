@@ -1,0 +1,262 @@
+; AY-3-8910 MUSIC: NEON RAIN, a procedural chiptune (works on any display)
+; A = lead: pentatonic random walk, vibrato, manual decay
+; B = buzz bass: tone off, envelope shape 8 whose period follows the note
+; C = arpeggio chords and drums (kick = pitch sweep, snare and hat = noise)
+; 16 bars: chords Am F C G, four sections, drums build up, tempo rises in the last section
+dim pent 8
+dim root 4
+dim third 4
+dim arp 4
+dim rh 16
+dim bs 16
+dim dr 16
+dim vib 8
+data pent 69 72 74 76 79 81 84 86
+data root 45 41 48 43
+data third 3 4 4 4
+data rh 1 0 1 1 0 1 0 1 1 0 1 0 1 1 0 1
+data bs 1 0 0 1 0 0 2 0 1 0 0 1 0 2 0 1
+data dr 1 0 3 0 2 0 3 0 1 0 3 1 2 0 3 3
+data vib 0 1 1 2 1 1 0 0
+t = 0
+st = 0
+bar = 0
+tempo = 6
+tc = 0
+li = 3
+lv = 0
+bt = 0
+dk = 0
+dt = 0
+rt = 45
+cl = 0
+ay 7 0x3A             ; mixer: tone A and C on, tone B off, noise off
+ay 8 0
+ay 9 0
+ay 10 0
+ay 6 8
+ay 12 0
+cls
+label main
+  tc = tc + 1
+  if tc >= tempo
+    tc = 0
+    gosub step
+  end
+  gosub frame
+  wait 1
+  goto main
+
+; ---- one sixteenth note ----
+label step
+  s = st & 15
+  if s == 0
+    gosub newbar
+  end
+  gosub lead
+  gosub bass
+  gosub drum
+  st = st + 1
+  return
+
+; chord, section and tempo for a new bar
+label newbar
+  cb = bar & 3
+  rt = root[cb]
+  th = third[cb]
+  arp[0] = 0
+  arp[1] = th
+  arp[2] = 7
+  arp[3] = 12
+  sec = bar & 12
+  tempo = 6
+  if sec == 12
+    tempo = 5
+  end
+  bar = bar + 1
+  bar = bar & 15
+  return
+
+; channel A: random walk on the pentatonic scale
+label lead
+  h = rh[s]
+  if h == 1
+    r = rnd & 3
+    if r == 0
+      if li > 0
+        li = li - 1
+      end
+    end
+    if r == 1
+      if li < 6
+        li = li + 1
+      end
+    end
+    if r == 2
+      if li < 5
+        li = li + 2
+      end
+    end
+    ln = pent[li]
+    if sec > 7
+      ln = ln + 12
+    end
+    note 0 ln
+    ayget pl 0
+    lv = 13
+    vi = 0
+  end
+  return
+
+; channel B: buzz bass, envelope period = tone period / 16
+label bass
+  b = bs[s]
+  if b > 0
+    bn = rt
+    if b == 2
+      bn = rt + 12
+    end
+    note 1 bn
+    ayget bl 2
+    ayget bh 3
+    q = 0
+    while bl > 15
+      bl = bl - 16
+      q = q + 1
+    end
+    e = bh + bh
+    e = e + e
+    e = e + e
+    e = e + e
+    e = e + q
+    ay 11 e
+    ay 13 8
+    ay 9 16
+    bt = 10
+  end
+  return
+
+; drum pattern, with a snare fill at the end of every bar
+label drum
+  d = dr[s]
+  if sec == 0
+    if d == 2
+      d = 0
+    end
+  end
+  if s == 15
+    d = 2
+  end
+  if d > 0
+    dk = d
+    dt = 0
+  end
+  return
+
+; ---- every frame: envelopes, vibrato, arpeggio, drums, meters ----
+label frame
+  m = t & 3
+  if m == 0
+    if lv > 0
+      lv = lv - 1
+    end
+  end
+  ay 8 lv
+  vo = vib[vi]
+  pl2 = pl + vo
+  if pl2 < pl
+    pl2 = pl
+  end
+  ay 0 pl2
+  vi = vi + 1
+  vi = vi & 7
+  if bt > 0
+    bt = bt - 1
+    if bt == 0
+      ay 9 0
+    end
+  end
+  if dk == 0
+    ay 7 0x3A
+    o = arp[m]
+    an = rt + 24
+    an = an + o
+    note 2 an
+    ay 10 7
+    cl = 7
+  else
+    gosub drumfx
+  end
+  m = t & 1
+  if m == 0
+    gosub meters
+  end
+  t = t + 1
+  return
+
+label drumfx
+  if dk == 1            ; kick: tone sweeps down
+    ay 7 0x3A
+    ay 4 0
+    kp = dt + 1
+    ay 5 kp
+    kv = dt + dt
+    kv = kv + dt
+    kv = 15 - kv
+    ay 10 kv
+    cl = kv
+    dt = dt + 1
+    if dt > 4
+      dk = 0
+    end
+  end
+  if dk == 2            ; snare: noise burst
+    ay 7 0x1E
+    ay 6 9
+    kv = dt + dt
+    kv = 14 - kv
+    ay 10 kv
+    cl = kv
+    dt = dt + 1
+    if dt > 6
+      dk = 0
+    end
+  end
+  if dk == 3            ; hat: short high noise
+    ay 7 0x1E
+    ay 6 3
+    ay 10 8
+    cl = 8
+    dt = dt + 1
+    if dt > 1
+      dk = 0
+    end
+  end
+  return
+
+; level bars for the three channels
+label meters
+  y = 54
+  lvl = lv
+  c = 11
+  gosub drawbar
+  y = 57
+  lvl = bt
+  c = 9
+  gosub drawbar
+  y = 60
+  lvl = cl
+  c = 12
+  gosub drawbar
+  return
+label drawbar
+  lv2 = lvl + lvl
+  for x = 0 to 32
+    col = 0
+    if x < lv2
+      col = c
+    end
+    xx = x + 2
+    plot xx y col
+  end
+  return
