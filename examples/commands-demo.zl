@@ -1,0 +1,12 @@
+; for, fill, get, inc, beep and the | ^ operators
+fill 1
+for i = 0 to 32
+  d = 31 - i
+  plot i i 10
+  plot i d 8
+  beep i
+  wait 2
+end
+get v 5 5
+plot 16 16 v
+stop
