@@ -50,3 +50,9 @@ The reference section in the page lists every command.
 - Values are 8-bit (0 to 255).
 - The TMS9918A and MC6847 keep pixels in their own memory layouts. `plot` works through helper ports, and the TMS9918A keeps its two-colors-per-8-pixels limit.
 - Built with the help of Claude.
+
+## Example programs
+
+The example programs are stored as plain text in the `examples/` folder (`.zl` files). Paste one into the editor of the console to run it.
+
+Other files: `cpc464/catch.bas` (a BASIC game for the Amstrad CPC464) and `docs/` (notes on how Snake and Boulder Dash work).
