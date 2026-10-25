@@ -1,0 +1,47 @@
+; one program, three graphics controllers
+; pick MC6845 CRTC graphics, TMS9918A VDP or MC6847 VDG in the display list
+; uses x 0-127, y 0-63 and colors 1-3, which all three can show
+cls
+for x = 0 to 128
+  plot x 0 1
+  plot x 63 1
+end
+for y = 0 to 64
+  plot 0 y 1
+  plot 127 y 1
+end
+for y = 4 to 16          ; three color bars
+  c = 1
+  if y > 7
+    c = 2
+  end
+  if y > 11
+    c = 3
+  end
+  for x = 8 to 120
+    plot x y c
+  end
+end
+bx = 90
+by = 30
+dx = 1
+dy = 1
+label main
+  plot bx by 0
+  bx = bx + dx
+  by = by + dy
+  if bx == 125
+    dx = 255
+  end
+  if bx == 2
+    dx = 1
+  end
+  if by == 61
+    dy = 255
+  end
+  if by == 22
+    dy = 1
+  end
+  plot bx by 3
+  wait 1
+  goto main
