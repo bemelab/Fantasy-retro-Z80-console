@@ -1,0 +1,102 @@
+; balls turn only when they hit a wall or each other
+dim bx 4
+dim by 4
+dim dx 4
+dim dy 4
+bx[0] = 5
+by[0] = 5
+bx[1] = 26
+by[1] = 6
+bx[2] = 6
+by[2] = 26
+bx[3] = 25
+by[3] = 25
+i = 0
+while i < 4
+  gosub rdir
+  dx[i] = v
+  gosub rdir
+  dy[i] = v
+  i = i + 1
+end
+cls
+label main
+  i = 0
+  while i < 4
+    px = bx[i]
+    py = by[i]
+    plot px py 0
+    i = i + 1
+  end
+  i = 0
+  while i < 4
+    gosub move
+    i = i + 1
+  end
+  i = 0
+  while i < 4
+    px = bx[i]
+    py = by[i]
+    c = i + 8
+    plot px py c
+    i = i + 1
+  end
+  wait 6
+  goto main
+
+; random direction: v = 1 or 255 (-1)
+label rdir
+  r = rnd & 2
+  v = r - 1
+  return
+
+; move ball i one step
+label move
+  nx = bx[i] + dx[i]
+  ny = by[i] + dy[i]
+  if nx > 31
+    if nx == 32
+      dx[i] = 255
+    else
+      dx[i] = 1
+    end
+    gosub rdir
+    dy[i] = v
+    return
+  end
+  if ny > 31
+    if ny == 32
+      dy[i] = 255
+    else
+      dy[i] = 1
+    end
+    gosub rdir
+    dx[i] = v
+    return
+  end
+  j = 0
+  while j < 4
+    if j != i
+      t = nx - bx[j]
+      t = t + 1
+      if t < 3
+        t = ny - by[j]
+        t = t + 1
+        if t < 3
+          gosub rdir
+          dx[i] = v
+          gosub rdir
+          dy[i] = v
+          gosub rdir
+          dx[j] = v
+          gosub rdir
+          dy[j] = v
+          return
+        end
+      end
+    end
+    j = j + 1
+  end
+  bx[i] = nx
+  by[i] = ny
+  return
