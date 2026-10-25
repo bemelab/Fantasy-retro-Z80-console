@@ -1,0 +1,7 @@
+; fills the screen with random colors
+while 1 == 1
+  x = rnd & 31
+  y = rnd & 31
+  c = rnd & 15
+  plot x y c
+end
