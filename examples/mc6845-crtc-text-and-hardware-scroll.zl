@@ -1,0 +1,30 @@
+; MC6845 CRTC demo. The CRTC display module is selected for you.
+; tcolor/tcls/locate/tprint/thex fill the text RAM, crtc r v writes a CRTC register.
+tcolor 0x0A
+tcls
+for n = 0 to 40
+  locate 0 n
+  tprint "LINE "
+  thex n
+  tprint "  TEXT RAM, SCROLLED BY THE CRTC START ADDRESS (R12, R13)"
+end
+crtc 10 0x66          ; cursor start line 6, blinking 1/32
+crtc 11 7             ; cursor end line 7
+hi = 0
+lo = 0
+s = 0
+label scroll
+  crtc 12 hi          ; start address high byte
+  crtc 13 lo          ; start address low byte
+  wait 8
+  lo = lo + 80        ; one text row further (80 cells per row)
+  if lo < 80
+    hi = hi + 1
+  end
+  s = s + 1
+  if s == 16
+    s = 0
+    hi = 0
+    lo = 0
+  end
+  goto scroll
