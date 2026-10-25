@@ -1,0 +1,43 @@
+; TMS9918A: Graphics II bitmap plus a hardware sprite (arrows move it)
+; vaddr hi lo sets the VRAM address, vdata writes a byte, vreg r v writes a register
+cls
+vaddr 0x38 0x00        ; sprite pattern 0 lives at VRAM $3800
+vdata 0x3C
+vdata 0x7E
+vdata 0xFF
+vdata 0xFF
+vdata 0xFF
+vdata 0xFF
+vdata 0x7E
+vdata 0x3C
+for x = 0 to 255
+  plot x 100 5
+end
+x = 120
+y = 80
+label main
+  key k
+  d = k & 1
+  if d == 1
+    x = x - 2
+  end
+  d = k & 2
+  if d == 2
+    x = x + 2
+  end
+  d = k & 4
+  if d == 4
+    y = y - 2
+  end
+  d = k & 8
+  if d == 8
+    y = y + 2
+  end
+  vaddr 0x1B 0x00      ; sprite attribute table: y, x, pattern, color
+  vdata y
+  vdata x
+  vdata 0
+  vdata 11
+  vdata 0xD0           ; end of sprite list
+  wait 1
+  goto main
