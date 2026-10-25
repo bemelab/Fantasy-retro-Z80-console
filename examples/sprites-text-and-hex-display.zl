@@ -1,0 +1,37 @@
+; sprites, 3x5 text and a seven-segment hex display (64x64 screen)
+def 0 24 60 126 255 255 126 60 24   ; diamond
+def 1 60 66 165 129 165 153 66 60   ; face
+def 2 36 36 126 219 255 255 36 66   ; invader
+x = 28
+y = 44
+n = 0
+cls
+print 2 2 11 "ZL-80 HEX"
+sprite 0 6 24 9
+sprite 2 48 24 8
+label main
+  sprite 1 x y 0
+  key k
+  d = k & 1
+  if d == 1
+    x = x - 1
+  end
+  d = k & 2
+  if d == 2
+    x = x + 1
+  end
+  d = k & 4
+  if d == 4
+    y = y - 1
+  end
+  d = k & 8
+  if d == 8
+    y = y + 1
+  end
+  x = x & 63
+  y = y & 63
+  sprite 1 x y 10
+  inc n
+  seg 26 11 14 n
+  wait 2
+  goto main
