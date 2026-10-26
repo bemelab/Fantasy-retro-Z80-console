@@ -95,6 +95,170 @@ table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical
 <details><summary>Compiled Z80 machine code</summary><pre id="hex">Not compiled yet.</pre></details>
 
 <script>
+/* Z80 CPU: every documented and undocumented instruction, flag bits 3 and 5, MEMPTR (WZ), Q for SCF/CCF,
+   interrupts (IM 0/1/2, NMI, the one-instruction delay after EI), HALT and T-state counts.
+   bus: rd(addr), wr(addr,v), in(port), out(port,v); ports are 16 bits (high byte = A or B, as on the real chip). */
+function Z80(bus){
+ const rd=bus.rd,wr=bus.wr,SZ=new Uint8Array(256),SZP=new Uint8Array(256);
+ for(let v=0;v<256;v++){let p=v^v>>4;p^=p>>2;p^=p>>1;SZ[v]=(v&0xA8)|(v?0:0x40);SZP[v]=SZ[v]|(p&1?0:4)}
+ let a=0,f=0,b=0,c=0,d=0,e=0,h=0,l=0,a2=0,f2=0,b2=0,c2=0,d2=0,e2=0,h2=0,l2=0,ix=0,iy=0,sp=0,pc=0,ir=0,rr=0,wz=0;
+ let iff1=0,iff2=0,im=0,halted=false,cyc=0,q=0,fw=0,eiDelay=false,irq=false,nmiReq=false;
+ const rd16=x=>rd(x)|rd((x+1)&0xFFFF)<<8,wr16=(x,v)=>{wr(x,v&255);wr((x+1)&0xFFFF,v>>8)};
+ const fetch=()=>{const v=rd(pc);pc=(pc+1)&0xFFFF;return v},fetch16=()=>{const v=rd16(pc);pc=(pc+2)&0xFFFF;return v};
+ const push=v=>{sp=(sp-1)&0xFFFF;wr(sp,v>>8);sp=(sp-1)&0xFFFF;wr(sp,v&255)},pop=()=>{const v=rd16(sp);sp=(sp+2)&0xFFFF;return v};
+ const incR=()=>{rr=(rr&0x80)|((rr+1)&0x7F)};
+ // flags: S Z Y H X P/V N C = 128 64 32 16 8 4 2 1; fw marks that this instruction wrote F (for Q)
+ const add8=(v,cy)=>{const r=a+v+cy;f=SZ[r&255]|(r>>8&1)|((a^v^r)&16)|(((a^~v)&(a^r)&0x80)>>5);a=r&255;fw=1};
+ const sub8=(v,cy)=>{const r=a-v-cy;f=SZ[r&255]|2|(r>>8&1)|((a^v^r)&16)|(((a^v)&(a^r)&0x80)>>5);a=r&255;fw=1};
+ const cp8=v=>{const r=a-v;f=(SZ[r&255]&0xD7)|(v&0x28)|2|(r>>8&1)|((a^v^r)&16)|(((a^v)&(a^r)&0x80)>>5);fw=1};
+ const alu=(op,v)=>{switch(op){case 0:add8(v,0);break;case 1:add8(v,f&1);break;case 2:sub8(v,0);break;case 3:sub8(v,f&1);break;
+  case 4:a&=v;f=SZP[a]|16;fw=1;break;case 5:a^=v;f=SZP[a];fw=1;break;case 6:a|=v;f=SZP[a];fw=1;break;default:cp8(v)}};
+ const inc8=v=>{const r=(v+1)&255;f=(f&1)|SZ[r]|(r===0x80?4:0)|(r&15?0:16);fw=1;return r};
+ const dec8=v=>{const r=(v-1)&255;f=(f&1)|2|SZ[r]|(v===0x80?4:0)|(v&15?0:16);fw=1;return r};
+ const rot=(op,v)=>{let r,cy;switch(op){case 0:cy=v>>7;r=(v<<1|cy)&255;break;case 1:cy=v&1;r=v>>1|cy<<7;break;
+  case 2:cy=v>>7;r=(v<<1|f&1)&255;break;case 3:cy=v&1;r=v>>1|(f&1)<<7;break;case 4:cy=v>>7;r=v<<1&255;break;
+  case 5:cy=v&1;r=v>>1|v&0x80;break;case 6:cy=v>>7;r=(v<<1|1)&255;break;default:cy=v&1;r=v>>1}
+  f=SZP[r]|cy;fw=1;return r};
+ const bitop=(n,v,xy)=>{const t=v&1<<n;f=(f&1)|16|(xy&0x28)|(t?t&0x80:0x44);fw=1};
+ const add16=(x,y)=>{const r=x+y;wz=(x+1)&0xFFFF;f=(f&0xC4)|(r>>16&1)|(r>>8&0x28)|((x^y^r)>>8&16);fw=1;return r&0xFFFF};
+ const adc16=y=>{const x=h<<8|l,r=x+y+(f&1);wz=(x+1)&0xFFFF;f=(r>>8&0xA8)|(r&0xFFFF?0:64)|((x^y^r)>>8&16)|((~(x^y)&(x^r)&0x8000)>>13)|(r>>16&1);fw=1;h=r>>8&255;l=r&255};
+ const sbc16=y=>{const x=h<<8|l,r=x-y-(f&1);wz=(x+1)&0xFFFF;f=(r>>8&0xA8)|(r&0xFFFF?0:64)|((x^y^r)>>8&16)|(((x^y)&(x^r)&0x8000)>>13)|2|(r>>16&1);fw=1;h=r>>8&255;l=r&255};
+ const daa=()=>{let t=0,cy=f&1,hf;const lo=a&15;if(f&16||lo>9)t=6;if(cy||a>0x99){t|=0x60;cy=1}
+  if(f&2){hf=f&16&&lo<6;a=(a-t)&255}else{hf=lo>9;a=(a+t)&255}f=SZP[a]|(hf?16:0)|(f&2)|cy;fw=1};
+ // registers by number: 0 B, 1 C, 2 D, 3 E, 4 H, 5 L, 7 A; x = 0 for HL, 1 for IX, 2 for IY (H and L become IXH and IXL)
+ const getR=(i,x)=>{switch(i){case 0:return b;case 1:return c;case 2:return d;case 3:return e;
+  case 4:return x?(x===1?ix:iy)>>8:h;case 5:return x?(x===1?ix:iy)&255:l;default:return a}};
+ const setR=(i,v,x)=>{switch(i){case 0:b=v;break;case 1:c=v;break;case 2:d=v;break;case 3:e=v;break;
+  case 4:if(!x)h=v;else if(x===1)ix=ix&255|v<<8;else iy=iy&255|v<<8;break;
+  case 5:if(!x)l=v;else if(x===1)ix=ix&0xFF00|v;else iy=iy&0xFF00|v;break;default:a=v}};
+ const getHL=x=>x?(x===1?ix:iy):h<<8|l,setHL=(x,v)=>{if(!x){h=v>>8;l=v&255}else if(x===1)ix=v;else iy=v};
+ const getRP=(p,x)=>p===0?b<<8|c:p===1?d<<8|e:p===2?getHL(x):sp;
+ const setRP=(p,v,x)=>{if(p===0){b=v>>8;c=v&255}else if(p===1){d=v>>8;e=v&255}else if(p===2)setHL(x,v);else sp=v};
+ const mAddr=x=>{if(!x)return h<<8|l;const ad=((x===1?ix:iy)+(fetch()<<24>>24))&0xFFFF;wz=ad;return ad}; // (HL) or (IX+d)
+ const cond=cc=>{switch(cc){case 0:return !(f&64);case 1:return !!(f&64);case 2:return !(f&1);case 3:return !!(f&1);
+  case 4:return !(f&4);case 5:return !!(f&4);case 6:return !(f&128);default:return !!(f&128)}};
+ const jr=()=>{const dd=fetch()<<24>>24;pc=(pc+dd)&0xFFFF;wz=pc};
+ function exec(op,x){
+  const X=op>>6,Y=op>>3&7,Zz=op&7;
+  if(X===1){
+   if(op===0x76){halted=true;cyc+=4}
+   else if(Zz===6){setR(Y,rd(mAddr(x)),0);cyc+=x?15:7}
+   else if(Y===6){wr(mAddr(x),getR(Zz,0));cyc+=x?15:7}
+   else{setR(Y,getR(Zz,x),x);cyc+=4}
+   return}
+  if(X===2){if(Zz===6){alu(Y,rd(mAddr(x)));cyc+=x?15:7}else{alu(Y,getR(Zz,x));cyc+=4}return}
+  if(X===0)switch(Zz){
+   case 0:switch(Y){
+    case 0:cyc+=4;return;
+    case 1:{let t=a;a=a2;a2=t;t=f;f=f2;f2=t;cyc+=4;return}
+    case 2:b=(b-1)&255;if(b){jr();cyc+=13}else{pc=(pc+1)&0xFFFF;cyc+=8}return;
+    case 3:jr();cyc+=12;return;
+    default:if(cond(Y-4)){jr();cyc+=12}else{pc=(pc+1)&0xFFFF;cyc+=7}return}
+   case 1:if(Y&1){setHL(x,add16(getHL(x),getRP(Y>>1,x)));cyc+=11}else{setRP(Y>>1,fetch16(),x);cyc+=10}return;
+   case 2:switch(Y){
+    case 0:case 2:{const ad=Y?d<<8|e:b<<8|c;wr(ad,a);wz=((ad+1)&255)|a<<8;cyc+=7;return}
+    case 1:case 3:{const ad=Y===3?d<<8|e:b<<8|c;a=rd(ad);wz=(ad+1)&0xFFFF;cyc+=7;return}
+    case 4:{const ad=fetch16();wr16(ad,getHL(x));wz=(ad+1)&0xFFFF;cyc+=16;return}
+    case 5:{const ad=fetch16();setHL(x,rd16(ad));wz=(ad+1)&0xFFFF;cyc+=16;return}
+    case 6:{const ad=fetch16();wr(ad,a);wz=((ad+1)&255)|a<<8;cyc+=13;return}
+    default:{const ad=fetch16();a=rd(ad);wz=(ad+1)&0xFFFF;cyc+=13;return}}
+   case 3:{const p=Y>>1,v=getRP(p,x);setRP(p,(Y&1?v-1:v+1)&0xFFFF,x);cyc+=6;return}
+   case 4:case 5:{const fn=Zz===4?inc8:dec8;if(Y===6){const ad=mAddr(x);wr(ad,fn(rd(ad)));cyc+=x?19:11}else{setR(Y,fn(getR(Y,x)),x);cyc+=4}return}
+   case 6:if(Y===6){const ad=mAddr(x);wr(ad,fetch());cyc+=x?15:10}else{setR(Y,fetch(),x);cyc+=7}return;
+   default:switch(Y){
+    case 0:{const cy=a>>7;a=(a<<1|cy)&255;f=(f&0xC4)|(a&0x28)|cy;break}
+    case 1:{const cy=a&1;a=a>>1|cy<<7;f=(f&0xC4)|(a&0x28)|cy;break}
+    case 2:{const cy=a>>7;a=(a<<1|f&1)&255;f=(f&0xC4)|(a&0x28)|cy;break}
+    case 3:{const cy=a&1;a=a>>1|(f&1)<<7;f=(f&0xC4)|(a&0x28)|cy;break}
+    case 4:daa();break;
+    case 5:a^=255;f=(f&0xC5)|0x12|(a&0x28);break;
+    case 6:f=(f&0xC4)|1|((q^f|a)&0x28);break;
+    default:f=((f&0xC5)|(f&1)<<4|((q^f|a)&0x28))^1}
+    fw=1;cyc+=4;return}
+  switch(Zz){
+   case 0:if(cond(Y)){pc=pop();wz=pc;cyc+=11}else cyc+=5;return;
+   case 1:switch(Y){
+    case 1:pc=pop();wz=pc;cyc+=10;return;
+    case 3:{let t=b;b=b2;b2=t;t=c;c=c2;c2=t;t=d;d=d2;d2=t;t=e;e=e2;e2=t;t=h;h=h2;h2=t;t=l;l=l2;l2=t;cyc+=4;return}
+    case 5:pc=getHL(x);cyc+=4;return;
+    case 6:{const v=pop();a=v>>8;f=v&255;cyc+=10;return}
+    case 7:sp=getHL(x);cyc+=6;return;
+    default:setRP(Y>>1,pop(),x);cyc+=10;return}
+   case 2:{const ad=fetch16();wz=ad;if(cond(Y))pc=ad;cyc+=10;return}
+   case 3:switch(Y){
+    case 0:pc=fetch16();wz=pc;cyc+=10;return;
+    case 2:{const n=fetch();bus.out(a<<8|n,a);wz=((n+1)&255)|a<<8;cyc+=11;return}
+    case 3:{const port=a<<8|fetch();a=bus.in(port)&255;wz=(port+1)&0xFFFF;cyc+=11;return}
+    case 4:{const v=rd16(sp);wr16(sp,getHL(x));setHL(x,v);wz=v;cyc+=19;return}
+    case 5:{let t=d;d=h;h=t;t=e;e=l;l=t;cyc+=4;return}
+    case 6:iff1=iff2=0;cyc+=4;return;
+    default:iff1=iff2=1;eiDelay=true;cyc+=4;return}
+   case 4:{const ad=fetch16();wz=ad;if(cond(Y)){push(pc);pc=ad;cyc+=17}else cyc+=10;return}
+   case 5:if(Y===1){const ad=fetch16();push(pc);pc=ad;wz=ad;cyc+=17}else{push(Y===6?a<<8|f:getRP(Y>>1,x));cyc+=11}return;
+   case 6:alu(Y,fetch());cyc+=7;return;
+   default:push(pc);pc=Y*8;wz=pc;cyc+=11}}
+ function cb(){
+  const op=fetch();incR();const X=op>>6,Y=op>>3&7,Zz=op&7;
+  if(Zz===6){const ad=h<<8|l,v=rd(ad);if(X===1){bitop(Y,v,wz>>8);cyc+=12}else{wr(ad,X===0?rot(Y,v):X===2?v&~(1<<Y):v|1<<Y);cyc+=15}return}
+  const v=getR(Zz,0);if(X===1)bitop(Y,v,v);else setR(Zz,X===0?rot(Y,v):X===2?v&~(1<<Y):v|1<<Y,0);cyc+=8}
+ function xcb(x){ // DD CB d op and FD CB d op; the result is also copied to a register unless op is an (IX+d) form
+  const ad=((x===1?ix:iy)+(fetch()<<24>>24))&0xFFFF,op=fetch(),X=op>>6,Y=op>>3&7,Zz=op&7,v=rd(ad);wz=ad;
+  if(X===1){bitop(Y,v,ad>>8);cyc+=16;return}
+  const r=X===0?rot(Y,v):X===2?v&~(1<<Y):v|1<<Y;wr(ad,r);if(Zz!==6)setR(Zz,r,0);cyc+=19}
+ function block(Y,Zz){ // LDI CPI INI OUTI, LDD CPD IND OUTD and their repeating forms
+  const dn=Y&1?-1:1,rep=Y>=6;let hl=h<<8|l,bc=b<<8|c;
+  switch(Zz){
+   case 0:{const v=rd(hl),de=d<<8|e;wr(de,v);hl=(hl+dn)&0xFFFF;const de2=(de+dn)&0xFFFF;d=de2>>8;e=de2&255;bc=(bc-1)&0xFFFF;
+    const n=(v+a)&255;f=(f&0xC1)|(bc?4:0)|(n&8)|(n&2)<<4;fw=1;if(rep&&bc){pc=(pc-2)&0xFFFF;wz=(pc+1)&0xFFFF;cyc+=21}else cyc+=16;break}
+   case 1:{const v=rd(hl),r=(a-v)&255,hf=(a^v^r)&16,n=(r-(hf?1:0))&255;hl=(hl+dn)&0xFFFF;bc=(bc-1)&0xFFFF;wz=(wz+dn)&0xFFFF;
+    f=(f&1)|2|(SZ[r]&0xC0)|hf|(bc?4:0)|(n&8)|(n&2)<<4;fw=1;if(rep&&bc&&r){pc=(pc-2)&0xFFFF;wz=(pc+1)&0xFFFF;cyc+=21}else cyc+=16;break}
+   case 2:{const v=bus.in(bc)&255;wz=(bc+dn)&0xFFFF;wr(hl,v);hl=(hl+dn)&0xFFFF;const nb=(b-1)&255,k=v+((c+dn)&255);
+    f=SZ[nb]|(v&0x80?2:0)|(k>255?17:0)|(SZP[(k&7)^nb]&4);fw=1;bc=nb<<8|c;if(rep&&nb){pc=(pc-2)&0xFFFF;cyc+=21}else cyc+=16;break}
+   default:{const v=rd(hl),nb=(b-1)&255,port=nb<<8|c;bus.out(port,v);wz=(port+dn)&0xFFFF;hl=(hl+dn)&0xFFFF;const k=v+(hl&255);
+    f=SZ[nb]|(v&0x80?2:0)|(k>255?17:0)|(SZP[(k&7)^nb]&4);fw=1;bc=nb<<8|c;if(rep&&nb){pc=(pc-2)&0xFFFF;cyc+=21}else cyc+=16}}
+  h=hl>>8;l=hl&255;b=bc>>8;c=bc&255}
+ function ed(){
+  const op=fetch();incR();const X=op>>6,Y=op>>3&7,Zz=op&7;
+  if(X===2&&Y>=4&&Zz<4){block(Y,Zz);return}
+  if(X!==1){cyc+=8;return} // undefined ED opcodes act as two NOPs
+  switch(Zz){
+   case 0:{const port=b<<8|c,v=bus.in(port)&255;wz=(port+1)&0xFFFF;f=(f&1)|SZP[v];fw=1;if(Y!==6)setR(Y,v,0);cyc+=12;return}
+   case 1:{const port=b<<8|c;bus.out(port,Y===6?0:getR(Y,0));wz=(port+1)&0xFFFF;cyc+=12;return}
+   case 2:if(Y&1)adc16(getRP(Y>>1,0));else sbc16(getRP(Y>>1,0));cyc+=15;return;
+   case 3:{const ad=fetch16();wz=(ad+1)&0xFFFF;if(Y&1)setRP(Y>>1,rd16(ad),0);else wr16(ad,getRP(Y>>1,0));cyc+=20;return}
+   case 4:{const v=a;a=0;sub8(v,0);cyc+=8;return}
+   case 5:iff1=iff2;pc=pop();wz=pc;cyc+=14;return;
+   case 6:im=[0,0,1,2,0,0,1,2][Y];cyc+=8;return;
+   default:switch(Y){
+    case 0:ir=a;cyc+=9;return;
+    case 1:rr=a;cyc+=9;return;
+    case 2:case 3:a=Y===2?ir:rr;f=(f&1)|SZ[a]|(iff2?4:0);fw=1;cyc+=9;return;
+    case 4:{const ad=h<<8|l,v=rd(ad);wr(ad,(a<<4|v>>4)&255);a=a&0xF0|v&15;f=(f&1)|SZP[a];fw=1;wz=(ad+1)&0xFFFF;cyc+=18;return}
+    case 5:{const ad=h<<8|l,v=rd(ad);wr(ad,(v<<4|a&15)&255);a=a&0xF0|v>>4;f=(f&1)|SZP[a];fw=1;wz=(ad+1)&0xFFFF;cyc+=18;return}
+    default:cyc+=8}}}
+ function step(){
+  if(nmiReq){nmiReq=false;halted=false;incR();iff1=0;push(pc);pc=0x66;wz=pc;q=0;cyc+=11;return}
+  if(irq&&iff1&&!eiDelay){ // IM 0 and IM 1 both end at 0x38 (IM 0 sees RST 38h on the idle bus)
+   halted=false;iff1=iff2=0;incR();push(pc);if(im===2){pc=rd16(ir<<8|0xFF);cyc+=19}else{pc=0x38;cyc+=13}wz=pc;q=0;return}
+  eiDelay=false;
+  if(halted){incR();q=0;cyc+=4;return}
+  let op=fetch(),x=0;incR();fw=0;
+  while(op===0xDD||op===0xFD){x=op===0xDD?1:2;cyc+=4;op=fetch();incR()}
+  if(op===0xCB){if(x)xcb(x);else cb()}else if(op===0xED)ed();else exec(op,x);
+  q=fw?f:0}
+ const cpu={step,
+  reset(){a=f=0xFF;b=c=d=e=h=l=a2=f2=b2=c2=d2=e2=h2=l2=0;ix=iy=0xFFFF;sp=0xFFFF;pc=ir=rr=wz=0;iff1=iff2=im=0;halted=eiDelay=irq=nmiReq=false;q=0},
+  nmi(){nmiReq=true}};
+ const P=(n,g,s)=>Object.defineProperty(cpu,n,{get:g,set:s,enumerable:true});
+ P("a",()=>a,v=>{a=v&255});P("f",()=>f,v=>{f=v&255});P("b",()=>b,v=>{b=v&255});P("c",()=>c,v=>{c=v&255});
+ P("d",()=>d,v=>{d=v&255});P("e",()=>e,v=>{e=v&255});P("h",()=>h,v=>{h=v&255});P("l",()=>l,v=>{l=v&255});
+ P("ix",()=>ix,v=>{ix=v&0xFFFF});P("iy",()=>iy,v=>{iy=v&0xFFFF});P("sp",()=>sp,v=>{sp=v&0xFFFF});P("pc",()=>pc,v=>{pc=v&0xFFFF});
+ P("i",()=>ir,v=>{ir=v&255});P("r",()=>rr,v=>{rr=v&255});P("wz",()=>wz,v=>{wz=v&0xFFFF});P("im",()=>im,v=>{im=v});
+ P("iff1",()=>iff1,v=>{iff1=v?1:0});P("iff2",()=>iff2,v=>{iff2=v?1:0});P("halted",()=>halted,v=>{halted=!!v});
+ P("cyc",()=>cyc,v=>{cyc=v});P("irq",()=>irq,v=>{irq=!!v});
+ cpu.reset();return cpu}
+</script>
+<script>
 const EX={
 "Move a dot":`; arrow keys move, fire clears
 x = 16
@@ -1815,55 +1979,18 @@ const GL={" ":"00000","0":"75557","1":"26227","2":"71747","3":"71717","4":"55711
 const ROM=new Uint8Array(0x300);
 for(let c=32;c<96;c++){const g=GL[String.fromCharCode(c)]||"00000";for(let r=0;r<5;r++)ROM[(c-32)*8+r]=parseInt(g[r],8)}
 ;[0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F,0x77,0x7C,0x39,0x5E,0x79,0x71].forEach((v,i)=>ROM[0x200+i]=v);
-let A,B,H,L,PC,fz,fc,halted,keys=0,bad=null,cyc=0,busy=0,SP=0x8000,Cr=0,actx=null,lastBeep=0,LMAP=[],LINFO="";
+let keys=0,bad=null,busy=0,actx=null,lastBeep=0,LMAP=[],LINFO="";
 const BUDGET=Math.round(4e6/60),STACKMIN=0x7400;
-const T={0x00:4,0x3E:7,0x3A:13,0x32:13,0x47:4,0x6F:4,0x67:4,0x7C:4,0x26:7,0x21:10,0x23:6,0x29:11,0x77:7,0x36:10,0x80:4,0x85:4,0x90:4,0xA0:4,0xB8:4,0xE6:7,0xF6:7,0xFE:7,0xC3:10,0xC2:10,0xCA:10,0xD2:10,0xDA:10,0x10:13,0xDB:11,0x76:4,0x7E:7,0x70:7,0xCD:17,0xC9:10,0x3C:4,0x3D:4,0x4F:4,0x81:4,0x87:4,0xB0:4,0xA8:4,0xD3:11};
-function boot(code){mem.fill(0);mem.set(code,0);mem.set(ROM,0x7000);crtcReset();tmsReset();A=B=H=L=PC=fz=fc=Cr=0;halted=false;bad=null;cyc=0;SP=0x8000}
+const cpu=Z80({rd:a=>mem[a],wr:(a,v)=>{mem[a]=v},in:p=>portIn(p&255),out:(p,v)=>portOut(p&255,v)});
+function portIn(p){return p===0?keys:p===1?(Math.random()*256|0):p===4?(crSel>=12&&crSel<=17?CR[crSel]:0):p===12?assistGet():p===14?tmsRead():p===15?tmsStatus():p===19?ayRead():0}
+function portOut(p,v){if(p===2)beep(v);else crtcOut(p,v)}
+function boot(code){mem.fill(0);mem.set(code,0);mem.set(ROM,0x7000);crtcReset();tmsReset();cpu.reset();cpu.a=cpu.f=0;cpu.sp=0x8000;cpu.cyc=0;bad=null}
+// ZL programs keep their stack between 0x7400 and 0x8000; catch a runaway gosub or a stray return before it overwrites the font ROM
 function step(){
- const n=()=>mem[PC++&65535],nn=()=>{const l=n();return l|n()<<8};
- const op=n();cyc+=T[op]||4;
- switch(op){
- case 0x00:break;
- case 0x3E:A=n();break;
- case 0x3A:A=mem[nn()];break;
- case 0x32:mem[nn()]=A;break;
- case 0x47:B=A;break;
- case 0x6F:L=A;break;
- case 0x67:H=A;break;
- case 0x7C:A=H;break;
- case 0x26:H=n();break;
- case 0x21:L=n();H=n();break;
- case 0x23:{const v=((H<<8|L)+1)&65535;H=v>>8;L=v&255;break}
- case 0x29:{const v=(H<<8|L)*2;fc=+(v>65535);H=(v>>8)&255;L=v&255;break}
- case 0x77:mem[H<<8|L]=A;break;
- case 0x36:mem[H<<8|L]=n();break;
- case 0x80:case 0x81:case 0x85:case 0x87:{const v=A+(op===0x80?B:op===0x81?Cr:op===0x85?L:A);fc=+(v>255);A=v&255;fz=+(A===0);break}
- case 0x90:{const v=A-B;fc=+(v<0);A=v&255;fz=+(A===0);break}
- case 0xA0:A&=B;fz=+(A===0);fc=0;break;
- case 0xE6:A&=n();fz=+(A===0);fc=0;break;
- case 0xF6:A|=n();fz=+(A===0);fc=0;break;
- case 0xB8:{const v=A-B;fc=+(v<0);fz=+((v&255)===0);break}
- case 0xFE:{const v=A-n();fc=+(v<0);fz=+((v&255)===0);break}
- case 0xC3:PC=nn();break;
- case 0xC2:{const t=nn();if(!fz)PC=t;break}
- case 0xCA:{const t=nn();if(fz)PC=t;break}
- case 0xD2:{const t=nn();if(!fc)PC=t;break}
- case 0xDA:{const t=nn();if(fc)PC=t;break}
- case 0x10:{const d=n();B=(B-1)&255;if(B)PC=(PC+(d<<24>>24))&65535;else cyc-=5;break}
- case 0xDB:{const p=n();A=p===0?keys:p===1?(Math.random()*256|0):p===4?(crSel>=12&&crSel<=17?CR[crSel]:0):p===12?assistGet():p===14?tmsRead():p===15?tmsStatus():p===19?ayRead():0;break}
- case 0x3C:A=(A+1)&255;fz=+(A===0);break;
- case 0x3D:A=(A-1)&255;fz=+(A===0);break;
- case 0x4F:Cr=A;break;
- case 0xB0:A|=B;fz=+(A===0);fc=0;break;
- case 0xA8:A^=B;fz=+(A===0);fc=0;break;
- case 0xD3:{const p=n();if(p===2)beep(A);else crtcOut(p,A);break}
- case 0x7E:A=mem[H<<8|L];break;
- case 0x70:mem[H<<8|L]=B;break;
- case 0xCD:{const t=nn();if(SP<=STACKMIN){bad="stack overflow at 0x"+((PC-3)&65535).toString(16)+" (gosub without return, or goto out of a subroutine)";halted=true;break}SP=(SP-2)&65535;mem[SP]=PC&255;mem[SP+1]=PC>>8;PC=t;break}
- case 0xC9:if(SP>=0x8000){bad="return without gosub at 0x"+((PC-1)&65535).toString(16);halted=true;break}PC=mem[SP]|mem[SP+1]<<8;SP=(SP+2)&65535;break;
- case 0x76:halted=true;break;
- default:bad="illegal opcode 0x"+op.toString(16)+" at 0x"+((PC-1)&65535).toString(16);halted=true}
-}
+ const op=mem[cpu.pc];
+ if(op===0xCD&&cpu.sp<=STACKMIN){bad="stack overflow at 0x"+cpu.pc.toString(16)+" (gosub without return, or goto out of a subroutine)";cpu.halted=true;return}
+ if(op===0xC9&&cpu.sp>=0x8000){bad="return without gosub at 0x"+cpu.pc.toString(16);cpu.halted=true;return}
+ cpu.step()}
 
 const DIS={0x00:"NOP|do nothing",0x3E:"LD A,%n|A = number",0x3A:"LD A,(%w)|A = variable",0x32:"LD (%w),A|store A in variable",0x47:"LD B,A|B = A (second operand)",0x4F:"LD C,A|C = A (column index)",0x6F:"LD L,A|L = A (low address byte)",0x67:"LD H,A|H = A",0x7C:"LD A,H|A = H",0x26:"LD H,%n|H = page (high address byte)",0x21:"LD HL,%w|HL = address",0x23:"INC HL|next address",0x29:"ADD HL,HL|HL = HL * 2",0x77:"LD (HL),A|write A to memory",0x70:"LD (HL),B|write B to memory",0x7E:"LD A,(HL)|read memory into A",0x36:"LD (HL),%n|write number to memory",0x80:"ADD A,B|A = A + B",0x81:"ADD A,C|A = A + C",0x85:"ADD A,L|A = A + L",0x87:"ADD A,A|A = A * 2",0x90:"SUB B|A = A - B",0xA0:"AND B|A = A and B",0xA8:"XOR B|A = A xor B",0xB0:"OR B|A = A or B",0xB8:"CP B|compare A with B",0xE6:"AND %n|mask bits of A",0xF6:"OR %n|set bits in A",0xFE:"CP %n|compare A with number",0x3C:"INC A|A = A + 1",0x3D:"DEC A|A = A - 1",0xC3:"JP %w|jump",0xC2:"JP NZ,%w|jump if not equal",0xCA:"JP Z,%w|jump if equal",0xD2:"JP NC,%w|jump if no carry (A >= B)",0xDA:"JP C,%w|jump if carry (A < B)",0xCD:"CALL %w|call subroutine",0xC9:"RET|return from subroutine",0x10:"DJNZ %e|B = B - 1, loop until zero",0xDB:"IN A,(%n)|read port (0 keys, 1 random)",0xD3:"OUT (%n),A|write port (2 beep)",0x76:"HALT|wait for next frame"};
 function dis(c,a){const f=(DIS[c[a]]||"DB %n|unknown").split("|");let len=1;
@@ -2017,11 +2144,11 @@ function draw(){if(MOD.crtc){drawCrtc();return}if(MOD.assist==="tms"){drawTms2()
 const hx=(v,w)=>v.toString(16).toUpperCase().padStart(w,"0");
 let timer=null;
 function frame(){
- halted=false;const c0=cyc;
- while(cyc-c0<BUDGET&&!halted)step();
- busy=Math.min(100,Math.round((cyc-c0)/BUDGET*100));
+ cpu.halted=false;const c0=cpu.cyc;
+ while(cpu.cyc-c0<BUDGET&&!cpu.halted)step();
+ busy=Math.min(100,Math.round((cpu.cyc-c0)/BUDGET*100));
  draw();
- $("st").textContent=bad||`A=${hx(A,2)} B=${hx(B,2)} HL=${hx(H<<8|L,4)} PC=${hx(PC,4)}  Z=${fz} C=${fc}  ${busy}% of 4 MHz  audio ${actx?actx.state:"off"}`;
+ $("st").textContent=bad||`A=${hx(cpu.a,2)} B=${hx(cpu.b,2)} HL=${hx(cpu.h<<8|cpu.l,4)} PC=${hx(cpu.pc,4)}  Z=${cpu.f>>6&1} C=${cpu.f&1}  ${busy}% of 4 MHz  audio ${actx?actx.state:"off"}`;
  $("st").className=bad?"err":"";
  if(bad)stop()}
 function stop(){clearInterval(timer);timer=null;ayReset()}

@@ -10,7 +10,7 @@ Press **Run** once so the browser allows sound.
 
 ## What is inside
 
-- **CPU:** a Z80 subset clocked at 4 MHz with real instruction timings (T-states), 64 KB of memory, a stack, and `CALL`/`RET`.
+- **CPU:** a full Z80 clocked at 4 MHz: every documented and undocumented instruction, all flags, interrupts (IM 0/1/2, NMI) and exact T-states, with 64 KB of memory. It passes the zexdoc and zexall instruction exercisers.
 - **ZL language:** variables, `if`/`else`, `while`, `for`, arrays (1D and 2D), `gosub`/`goto`, `data` tables, sprites, text, and chip commands. It compiles to Z80 machine code.
 - **Assembly listing:** every ZL line is shown with the Z80 instructions it produced, with comments.
 - **Displays** (choose in the dropdown):
