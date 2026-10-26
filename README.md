@@ -56,3 +56,7 @@ The reference section in the page lists every command.
 The example programs are stored as plain text in the `examples/` folder (`.zl` files). Paste one into the editor of the console to run it.
 
 Other files: `cpc464/catch.bas` (a BASIC game for the Amstrad CPC464) and `docs/` (notes on how Snake and Boulder Dash work).
+
+## Real hardware
+
+`docs/hardware.md` is the plan for a real ZL-80 board: Z80, TMS9928A video, AY-3-8910 sound, 512 KB flash and 512 KB RAM, a keyboard and joysticks, and SCART output to a TV. The emulator will get a hardware mode that copies this board exactly.
