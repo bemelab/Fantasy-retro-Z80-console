@@ -57,7 +57,7 @@ table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical
 <tr><td>wait n</td><td>Pauses n frames (60 per second).</td></tr>
 <tr><td>if a &lt; b … else … end</td><td>Compares: &lt; &gt; &lt;= &gt;= == !=</td></tr>
 <tr><td>while a &lt; b … end</td><td>Loop. Use <i>while 1 == 1</i> to loop forever.</td></tr>
-<tr><td>dim a 4</td><td>Declares an array (up to 256 items). Use <i>a[i] = 5</i> and <i>x = a[i]</i>. The index is a number or variable. <i>plot</i> takes plain variables, so copy array items first.</td></tr>
+<tr><td>dim a 4</td><td>Declares an array (up to 256 items). Use <i>a[i] = 5</i> and <i>x = a[i]</i>. The index is a number or variable.</td></tr>
 <tr><td>label name</td><td>Marks a place in the program.</td></tr>
 <tr><td>goto name</td><td>Jumps to a label.</td></tr>
 <tr><td>gosub name … return</td><td>Calls a subroutine; <i>return</i> comes back to the line after the call.</td></tr>
@@ -1044,7 +1044,7 @@ label main
   gosub music
   gosub sprites
   tf = tf + 1
-  if tf == 360         ; change video mode every 6 seconds
+  if tf == 240         ; change video mode every 4 seconds (variables are 8-bit)
     tf = 0
     stg = stg + 1
     stg = stg & 3
@@ -1709,7 +1709,7 @@ function expand(src){
 function compile(src){
  const code=[],vars={},st=[];let nv=0;
  const e=(...b)=>code.push(...b);
- const V=n=>vars[n]??(vars[n]=0x4000+nv++);
+ const V=n=>{if(!(n in vars)&&nv>=0x1000)throw Error("too many variables (4096 max)");return vars[n]??(vars[n]=0x4000+nv++)};
  const arrs={_spr:{pg:0x73,sh:3,two:1},_fa:{pg:0x70,sh:3,two:1},_fb:{pg:0x71,sh:3,two:1},_sg:{pg:0x72,sh:0,two:0}},labs={},fix=[];let na=0x50;
  const AR=n=>{if(!(n in arrs))throw Error("unknown array "+n);return arrs[n]};
  const map=[];LMAP=map;
@@ -1719,7 +1719,7 @@ function compile(src){
   e(0x6F,0x26,a.pg)};
  const ld=t=>{
   if(t==="rnd")e(0xDB,1);
-  else if(/^(\d+|0x[0-9a-f]+)$/i.test(t))e(0x3E,t&255);
+  else if(/^(\d+|0x[0-9a-f]+)$/i.test(t)){if(+t>255)throw Error("number "+t+" is too big (0 to 255)");e(0x3E,+t)}
   else if(/^[a-z_]\w*\[\w+\](\[\w+\])?$/i.test(t)){adr(t);e(0x7E)}
   else if(/^[a-z_]\w*$/i.test(t)){const a=V(t);e(0x3A,a&255,a>>8)}
   else throw Error("bad operand "+t)};
@@ -1741,13 +1741,15 @@ function compile(src){
   const t=w&&[];if(w)for(let q=0;q<w.length;q++){if(w[q+1]==="["&&w[q+3]==="]"){if(w[q+4]==="["&&w[q+6]==="]"){t.push(w[q]+"["+w[q+2]+"]["+w[q+5]+"]");q+=6}else{t.push(w[q]+"["+w[q+2]+"]");q+=3}}else t.push(w[q])}
   if(!t)return;
   const k=t[0].toLowerCase();
+  // plot and get keep the pixel address in HL, and array items use HL too, so copy array items into helper variables first
+  if((k==="plot"||k==="get")&&t[1]!=="=")for(let q=k==="get"?2:1;q<t.length;q++)if(t[q].includes("[")){ld(t[q]);const a=V("_q"+q);e(0x32,a&255,a>>8);t[q]="_q"+q}
   if(t[1]==="="){ex(t.slice(2));const am=/\[/.test(t[0]);
    if(am){e(0x47);adr(t[0]);e(0x70)}else{const a=V(t[0]);e(0x32,a&255,a>>8)}}
   else if(MOD.assist&&k==="plot"){ld(t[1]);e(0xD3,10);ld(t[2]);e(0xD3,11);ld(t[3]);e(0xD3,12)}
   else if(MOD.assist&&k==="get"){ld(t[2]);e(0xD3,10);ld(t[3]);e(0xD3,11);e(0xDB,12);const a=V(t[1]);e(0x32,a&255,a>>8)}
   else if(MOD.assist&&k==="cls"){e(0x3E,0,0xD3,13)}
   else if(MOD.assist&&k==="fill"){ld(t[1]);e(0xD3,13)}
-  else if(k==="plot"){if(t.some(s=>s.includes("[")))throw Error("plot needs numbers or plain variables, not array items");
+  else if(k==="plot"){
    ld(t[2]);e(0xE6,MOD.ym,0x6F,0x26,0,...Array(MOD.sw).fill(0x29));
    ld(t[1]);e(0xE6,MOD.xm,0x85,0x6F,0x7C,0xF6,0x80,0x67);
    ld(t[3]);e(0xE6,15,0x77)}
@@ -1758,7 +1760,7 @@ function compile(src){
   else if(k==="if"){st.push({k:"i",j:cond(t[1],t[2],t[3])})}
   else if(k==="else"){const b=st.pop();if(!b||b.k!=="i")throw Error("else without if");const j=jp(0xC3);patch(b.j,code.length);st.push({k:"e",j})}
   else if(k==="end"){const b=st.pop();if(!b)throw Error("end without block");if(b.k==="f"){const a=V(b.v);e(0x3A,a&255,a>>8,0x3C,0x32,a&255,a>>8)}if(b.k==="w"||b.k==="f")e(0xC3,b.s&255,b.s>>8);patch(b.j,code.length)}
-  else if(k==="dim"){const d1=+t[2],d2=t[3]?+t[3]:0;if(!(d1>0)||d1*(d2||1)>256)throw Error("array too big (256 items max)");
+  else if(k==="dim"){const d1=+t[2],d2=t[3]?+t[3]:0;if(!(d1>0)||d1*(d2||1)>256)throw Error("array too big (256 items max)");if(na>0x6F)throw Error("too many arrays (32 max)");
    if(d2){const sh=Math.log2(d2);if(!Number.isInteger(sh))throw Error("second size must be 1, 2, 4, 8, 16, 32, 64 or 128");arrs[t[1]]={pg:na++,sh,two:1}}else arrs[t[1]]={pg:na++,sh:0,two:0}}
   else if(k==="label"){labs[t[1]]=code.length}
   else if(k==="goto"||k==="gosub"){e(k==="goto"?0xC3:0xCD,0,0);fix.push([code.length-2,t[1]])}
@@ -1795,6 +1797,7 @@ function compile(src){
  for(const [p,n] of fix){if(!(n in labs))throw Error("unknown label "+n);patch(p,labs[n])}
  LINFO="; variables: "+(Object.entries(vars).map(([k,v])=>k+"=$"+v.toString(16).toUpperCase()).join(" ")||"none")+"\n; arrays: "+(Object.entries(arrs).map(([k,v])=>k+"=$"+(v.pg*256).toString(16).toUpperCase()).join(" ")||"none")+"\n; display: "+MOD.c+", video RAM $8000, stride "+(1<<MOD.sw)+" bytes per row\n; stack below $8000, ports: 0 keys, 1 random, 2 beep";
  const h=code.length;e(0x76,0xC3,h&255,h>>8);
+ if(code.length>0x4000)throw Error("program too big ("+code.length+" bytes, 16384 max)");
  return code}
 
 const MODS=[
@@ -1813,7 +1816,7 @@ const ROM=new Uint8Array(0x300);
 for(let c=32;c<96;c++){const g=GL[String.fromCharCode(c)]||"00000";for(let r=0;r<5;r++)ROM[(c-32)*8+r]=parseInt(g[r],8)}
 ;[0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F,0x77,0x7C,0x39,0x5E,0x79,0x71].forEach((v,i)=>ROM[0x200+i]=v);
 let A,B,H,L,PC,fz,fc,halted,keys=0,bad=null,cyc=0,busy=0,SP=0x8000,Cr=0,actx=null,lastBeep=0,LMAP=[],LINFO="";
-const BUDGET=Math.round(4e6/60);
+const BUDGET=Math.round(4e6/60),STACKMIN=0x7400;
 const T={0x00:4,0x3E:7,0x3A:13,0x32:13,0x47:4,0x6F:4,0x67:4,0x7C:4,0x26:7,0x21:10,0x23:6,0x29:11,0x77:7,0x36:10,0x80:4,0x85:4,0x90:4,0xA0:4,0xB8:4,0xE6:7,0xF6:7,0xFE:7,0xC3:10,0xC2:10,0xCA:10,0xD2:10,0xDA:10,0x10:13,0xDB:11,0x76:4,0x7E:7,0x70:7,0xCD:17,0xC9:10,0x3C:4,0x3D:4,0x4F:4,0x81:4,0x87:4,0xB0:4,0xA8:4,0xD3:11};
 function boot(code){mem.fill(0);mem.set(code,0);mem.set(ROM,0x7000);crtcReset();tmsReset();A=B=H=L=PC=fz=fc=Cr=0;halted=false;bad=null;cyc=0;SP=0x8000}
 function step(){
@@ -1856,8 +1859,8 @@ function step(){
  case 0xD3:{const p=n();if(p===2)beep(A);else crtcOut(p,A);break}
  case 0x7E:A=mem[H<<8|L];break;
  case 0x70:mem[H<<8|L]=B;break;
- case 0xCD:{const t=nn();SP=(SP-2)&65535;mem[SP]=PC&255;mem[SP+1]=PC>>8;PC=t;break}
- case 0xC9:PC=mem[SP]|mem[SP+1]<<8;SP=(SP+2)&65535;break;
+ case 0xCD:{const t=nn();if(SP<=STACKMIN){bad="stack overflow at 0x"+((PC-3)&65535).toString(16)+" (gosub without return, or goto out of a subroutine)";halted=true;break}SP=(SP-2)&65535;mem[SP]=PC&255;mem[SP+1]=PC>>8;PC=t;break}
+ case 0xC9:if(SP>=0x8000){bad="return without gosub at 0x"+((PC-1)&65535).toString(16);halted=true;break}PC=mem[SP]|mem[SP+1]<<8;SP=(SP+2)&65535;break;
  case 0x76:halted=true;break;
  default:bad="illegal opcode 0x"+op.toString(16)+" at 0x"+((PC-1)&65535).toString(16);halted=true}
 }
@@ -1881,7 +1884,7 @@ const CR=new Uint8Array(32),HXD="0123456789ABCDEF";let crSel=0,upd=0,tattr=7,lco
 /* MC6845-style CRTC: R0-R15 as the real chip, plus 6545 extras: R18/R19 update address, R31 update strobe.
    Ports: 3 register select, 4 data (read R12-R17), 5 text attribute, 6 write hex byte, 7/8 locate col/row, 9 clear text.
    Text RAM: characters at $A000, attributes at $B000, addressed by the CRTC memory address MA. */
-function crtcReset(){CR.fill(0);CR.set([113,80,90,143,31,6,25,28,0,7,0x66,7]);if(MOD.crtc===2){CR[1]=16;CR[6]=8}upd=0;tattr=7;mem.fill(32,0xA000,0xB000);mem.fill(7,0xB000,0xC000)}
+function crtcReset(){CR.fill(0);CR.set([113,80,90,143,31,6,25,28,0,7,0x66,7]);if(MOD.crtc===2){CR[1]=16;CR[6]=8}upd=0;tattr=7;if(MOD.crtc===1){mem.fill(32,0xA000,0xB000);mem.fill(7,0xB000,0xC000)}}
 function tput(c){const a=upd&0xFFF;mem[0xA000+a]=c;mem[0xB000+a]=tattr;upd=(a+1)&0xFFF;CR[14]=upd>>8;CR[15]=upd&255}
 function crtcOut(p,v){
  if(p>=10)return ioOut(p,v);
@@ -1946,7 +1949,8 @@ function ayEnv(){const sh=AYR[13],C=sh&8,A=(sh&4)?1:0,L=(sh&2)?1:0,H=sh&1,p=ayS.
  if(p>=16&&(!C||H))return C?((A^L)?15:0):0;
  const i=p&15,d1=A?1:-1,d=(p>>4)?(L?-d1:d1):d1;return d>0?i:15-i}
 function ayTick(){
- for(let c=0;c<3;c++){const p=(((AYR[c*2+1]&15)<<8)|AYR[c*2])||1;if(++ayS.tc[c]>=p){ayS.tc[c]=0;ayS.to[c]^=1}}
+ // the tone output flips every period/2 ticks, so a full wave lasts 16 x period clocks, as on the real chip
+ for(let c=0;c<3;c++){const p=(((AYR[c*2+1]&15)<<8)|AYR[c*2])||1;if((ayS.tc[c]+=2)>=p){ayS.tc[c]-=p;if(ayS.tc[c]>=p)ayS.tc[c]=0;ayS.to[c]^=1}}
  const np=(AYR[6]&31)||1;if(++ayS.nc>=np){ayS.nc=0;ayS.lf=(ayS.lf>>1)|(((ayS.lf^(ayS.lf>>3))&1)<<16)}
  const ep=((AYR[12]<<8)|AYR[11])||1;if(++ayS.ec>=ep){ayS.ec=0;if(ayS.ep<16)ayS.ep++;else if((AYR[13]&8)&&!(AYR[13]&1))ayS.ep=(ayS.ep+1)&31}}
 function ayOut(){const m=AYR[7],nb=ayS.lf&1,ev=ayEnv(),a=[0,0,0];
@@ -1958,9 +1962,9 @@ function audioInit(){try{actx=actx||new(window.AudioContext||window.webkitAudioC
  const u=actx.createBuffer(1,1,22050),us=actx.createBufferSource();us.buffer=u;us.connect(actx.destination);us.start(0);
  if(!ayNode)ayNode=setInterval(ayPump,30)}catch(x){}}
 let aySched=0;
-function ayPump(){if(!actx||actx.state!=="running")return;const sr=actx.sampleRate,n=Math.round(sr*0.05);
- if(aySched<actx.currentTime)aySched=actx.currentTime+0.06;
- while(aySched<actx.currentTime+0.25){const b=actx.createBuffer(2,n,sr);ayRender(b.getChannelData(0),b.getChannelData(1));const s=actx.createBufferSource();s.buffer=b;s.connect(actx.destination);s.start(aySched);aySched+=n/sr}}
+function ayPump(){if(!actx||actx.state!=="running")return;const sr=actx.sampleRate,n=Math.round(sr*0.03);
+ if(aySched<actx.currentTime)aySched=actx.currentTime+0.04;
+ while(aySched<actx.currentTime+0.12){const b=actx.createBuffer(2,n,sr);ayRender(b.getChannelData(0),b.getChannelData(1));const s=actx.createBufferSource();s.buffer=b;s.connect(actx.destination);s.start(aySched);aySched+=n/sr}}
 const tmsOff=(x,y)=>(y>>3)*256+(x>>3)*8+(y&7),tmsPB=()=>(VR[4]&4)?0x2000:0,tmsCB=()=>(VR[3]&0x80)?0x2000:0;
 function tmsPlot(x,y,c){if(y>=192)return;const o=tmsOff(x,y),m=0x80>>(x&7);if(c&15){vram[tmsPB()+o]|=m;vram[tmsCB()+o]=((c&15)<<4)|(vram[tmsCB()+o]&15)}else vram[tmsPB()+o]&=~m}
 function tmsFill(c){const pb=tmsPB(),cb=tmsCB();vram.fill(c?0xFF:0,pb,pb+0x1800);vram.fill(c?((c&15)<<4)|1:0xF1,cb,cb+0x1800)}
@@ -1971,23 +1975,6 @@ function assistGet(){
  if(MOD.assist==="tms"){if(ay>=192)return 0;const o=tmsOff(ax,ay);return vram[tmsPB()+o]&(0x80>>(ax&7))?vram[tmsCB()+o]>>4:0}
  if(!(vmode&1))return 0;const [w,h,b]=vdgDims();if(ax>=w||ay>=h)return 0;
  const a=(vbase<<8)+ay*(w*b>>3)+((ax*b)>>3),sh=b===2?6-2*(ax&3):7-(ax&7);return (mem[a]>>sh)&(b===2?3:1)}
-function drawTms(){
- const d=img.data,bd=TP[VR[7]&15],nb=(VR[2]&15)<<10,g2=VR[0]&2;
- const put=(x,y,c)=>{if(x<0||x>255)return;const k=(y*256+x)*4,q=c?TP[c]:bd;d[k]=q[0];d[k+1]=q[1];d[k+2]=q[2];d[k+3]=255};
- for(let y=0;y<192;y++)for(let tx=0;tx<32;tx++){
-  if(!(VR[1]&0x40)){for(let b=0;b<8;b++)put(tx*8+b,y,0);continue}
-  const n=vram[nb+(y>>3)*32+tx];let p,col;
-  if(g2){const i=(((y>>6)<<8)+n)*8+(y&7);p=vram[tmsPB()+i];col=vram[tmsCB()+i]}
-  else{p=vram[((VR[4]&7)<<11)+n*8+(y&7)];col=vram[(VR[3]<<6)+(n>>3)]}
-  for(let b=0;b<8;b++)put(tx*8+b,y,(p>>(7-b))&1?col>>4:col&15)}
- if(VR[1]&0x40){
-  const sa=(VR[5]&127)<<7,sp=(VR[6]&7)<<11,big=VR[1]&2,mag=VR[1]&1?2:1,hh=(big?16:8)*mag;
-  const top=a=>{let y0=(vram[a]+1)&255;if(y0>=224)y0-=256;return y0};
-  for(let line=0;line<192;line++){const vis=[];
-   for(let s=0;s<32;s++){if(vram[sa+s*4]===0xD0)break;const y0=top(sa+s*4);if(line>=y0&&line<y0+hh){vis.push(s);if(vis.length===4)break}}
-   for(let j=vis.length-1;j>=0;j--){const a=sa+vis[j]*4,y0=top(a),ly=((line-y0)/mag)|0,nm=big?vram[a+2]&252:vram[a+2],cl=vram[a+3],x0=vram[a+1]-(cl&128?32:0);
-    for(let px=0;px<hh;px++){const sx=(px/mag)|0,byte=vram[sp+nm*8+ly+(sx>=8?16:0)];if(((byte>>(7-(sx&7)))&1)&&(cl&15))put(x0+px,line,cl&15)}}}}
- cx.putImageData(img,0,0)}
 function drawVdg(){
  const ag=vmode&1,css=(vmode>>4)&1,inv=(vmode>>5)&1,base=vbase<<8;let w=256,h=192,b=1;
  if(ag){[w,h,b]=vdgDims()}
@@ -2037,7 +2024,7 @@ function frame(){
  $("st").textContent=bad||`A=${hx(A,2)} B=${hx(B,2)} HL=${hx(H<<8|L,4)} PC=${hx(PC,4)}  Z=${fz} C=${fc}  ${busy}% of 4 MHz  audio ${actx?actx.state:"off"}`;
  $("st").className=bad?"err":"";
  if(bad)stop()}
-function stop(){clearInterval(timer);timer=null}
+function stop(){clearInterval(timer);timer=null;ayReset()}
 function run(){
  audioInit();
  stop();
@@ -2056,6 +2043,7 @@ $("src").value=EX["AY-3-8910 music: Neon Rain"];sel.value="AY-3-8910 music: Neon
 const KM={ArrowLeft:1,ArrowRight:2,ArrowUp:4,ArrowDown:8," ":16};
 addEventListener("keydown",e=>{if(KM[e.key]&&document.activeElement!==$("src")){keys|=KM[e.key];e.preventDefault()}});
 addEventListener("keyup",e=>{if(KM[e.key])keys&=~KM[e.key]});
+addEventListener("blur",()=>{keys=0});
 document.querySelectorAll("#pad button").forEach(b=>{
  const m=+b.dataset.b;
  b.onpointerdown=e=>{e.preventDefault();keys|=m};

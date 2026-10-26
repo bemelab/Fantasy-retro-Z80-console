@@ -69,7 +69,7 @@ label main
   gosub music
   gosub sprites
   tf = tf + 1
-  if tf == 360         ; change video mode every 6 seconds
+  if tf == 240         ; change video mode every 4 seconds (variables are 8-bit)
     tf = 0
     stg = stg + 1
     stg = stg & 3
