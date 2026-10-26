@@ -200,7 +200,7 @@ label st0
   es = 9
   bp = 18
   vreg 0 2
-  vreg 1 0xC1
+  vreg 1 0xE1
   vreg 2 6
   vreg 3 0xFF
   vreg 4 3
@@ -241,7 +241,7 @@ label st1
   es = 14
   bp = 12
   vreg 0 0
-  vreg 1 0xC1
+  vreg 1 0xE1
   vreg 2 5
   vreg 3 0x80
   vreg 4 0
@@ -273,7 +273,7 @@ label st2
   es = 12
   bp = 24
   vreg 0 0
-  vreg 1 0xD0
+  vreg 1 0xF0
   vreg 2 2
   vreg 4 0
   vreg 7 0xF4
@@ -301,7 +301,7 @@ label st3
   es = 10
   bp = 4
   vreg 0 0
-  vreg 1 0xC9
+  vreg 1 0xE9
   vreg 2 5
   vreg 4 0
   vreg 7 1

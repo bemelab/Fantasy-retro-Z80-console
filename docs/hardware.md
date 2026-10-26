@@ -57,7 +57,7 @@ The Z80 sees 64 KB, split into four 16 KB banks. Each bank can show any of 64 pa
 | 0x79 | Page for bank 1 (0x4000-0x7FFF) |
 | 0x7A | Page for bank 2 (0x8000-0xBFFF) |
 | 0x7B | Page for bank 3 (0xC000-0xFFFF) |
-| 0x7C | Bit 0 = 1 turns paging on. After reset it is off and flash page 0 is seen. |
+| 0x7C | Bit 0 = 1 turns paging on. After reset it is off: flash page 0 shows in all four banks and writes go nowhere. |
 
 Normal map after the kernel starts:
 
@@ -65,7 +65,7 @@ Normal map after the kernel starts:
 |---|---|---|
 | 0x0000-0x3FFF | flash 0 | Kernel: reset, interrupt handler at 0x0038, serial loader, runtime library, font, note table. Always mapped. |
 | 0x4000-0xBFFF | RAM 32, 33 | Program code (up to 32 KB). |
-| 0xC000-0xFFFF | RAM 34 | Variables, arrays, sprite definitions, stack (starts at 0xFFFF and grows down). |
+| 0xC000-0xFFFF | RAM 34 | 0xC000 variables (1024), 0xC400 arrays (44 of up to 256 bytes), 0xF000 sprite rows, 0xF100-0xFEFF stack (starts at 0xFF00), 0xFF00 kernel variables. |
 
 The other pages (flash 1 to 31, RAM 35 to 63, about 900 KB) hold stored programs, levels, music and pictures. A later `bank` command in ZL can switch banks 1 to 3. Bank 0 never changes, so the interrupt handler is always there.
 
@@ -147,13 +147,54 @@ SCART carries RGB, sync, stereo audio and an "AV on" signal on one cable, and Eu
 - **Loading:** the emulator gets a "Send to console" button. It uses Web Serial in Chrome or Edge to send the compiled program over USB serial. The kernel copies it to 0x4000 and runs it.
 - **Saving:** a ROM file (.bin, 512 KB) for an EEPROM programmer, and an Intel HEX file. Later, the kernel can write a received program into flash itself.
 
-## Emulator changes this needs
+## Kernel
 
-1. A full Z80 core with all instructions and flags, checked with the zexdoc test program.
-2. A "ZL-80 hardware" mode with the clocks, page mapper, ports and interrupts above, flash pages that cannot be written, and errors for unknown ports.
-3. The compiler emits real port numbers. The current helper ports (plot, get, cls and fill assist, note, random, font, beep, CRTC text helpers) become Z80 routines in the kernel.
-4. Keyboard matrix and joystick emulation.
-5. ROM and HEX download, and "Send to console" over Web Serial.
+The kernel is built by `buildKernel()` in `index.html` and fills flash page 0. On reset it:
+
+1. Maps flash 0 and RAM 32, 33, 34 into the four banks and turns paging on.
+2. Clears RAM 0xC000-0xFFFF (RAM holds random values at power-on, and ZL variables start at 0), sets the stack to 0xFF00 and IM 1.
+3. Sets up the 8255 (control word 0x82) and the AY mixer (R7 = 0xBF).
+4. Writes R0-R7 of the VDP with the display off, clears the 16 KB of VRAM, writes the name table (0-255 three times), the colour table (0xF1) and ends the sprite list (0xD0 at 0x1B00). Then it turns on the display and the frame interrupt (R1 = 0xE0). VDP registers cannot be read back, so the kernel keeps copies at 0xFF10-0xFF17.
+5. Copies the program from flash pages 1 and 2 to RAM at 0x4000 and runs it. If flash page 1 is erased (first byte 0xFF), it waits.
+
+This takes about 34 frames (0.6 s).
+
+The interrupt handler at 0x0038 reads the VDP status (which clears the interrupt) and keeps it at 0xFF02 for `vstat`.
+
+Compiled ZL calls kernel routines for everything that touches a chip. Arguments go in 0xFF00 (ARGX), 0xFF01 (ARGY) and A:
+
+| ZL | Kernel routine |
+|---|---|
+| `plot`, `get`, `cls`, `fill` | PLOT, GET, FILL: read-modify-write of the Graphics II pattern and colour tables, using the table addresses in the register copies |
+| `key` | KEY: keyboard row 8 (arrows, space) or joystick 1, as 1 left, 2 right, 4 up, 8 down, 16 fire |
+| `rnd` | RND: 16-bit LFSR mixed with the R register |
+| `beep` | BEEP: a short tone with a decay envelope on AY channel C |
+| `note` | NOTE: tone period from a table of 256 MIDI notes |
+| `ay`, `ayget` | AYW, AYRD. Writes to R7 always keep port A as input and port B as output, so the AY never drives the joystick lines. |
+| `vreg`, `vaddr`, `vrd`, `vdata`, `vget`, `vfont` | VREG, VAW, VAR, VWR, VRD, VFONT. Two-byte VDP control writes run with interrupts off, because the interrupt handler's status read resets the VDP's byte latch. |
+
+Rules for programs on the board:
+
+- **VRAM timing.** During the active display the TMS9918A needs 8 us (29 T-states at 3.58 MHz) between VRAM accesses, and 2 us otherwise. The kernel loops keep to this, and `vdata` goes through a call, which spaces the writes. The emulator stops a program that accesses VRAM faster.
+- **VDP register 1 bit 5** turns on the frame interrupt. Without it `wait` never ends, so `vreg 1 n` must keep 0x20 set.
+- **Not on the board:** the MC6845 and MC6847 commands (`crtc`, `crtcget`, `tcolor`, `locate`, `thex`, `tcls`, `tprint`, `vdg`, `vbase`, `vprint`).
+- `plot` on the TMS9928A is a read-modify-write of two VRAM bytes, so it is much slower than on the fantasy displays: a few hundred T-states per pixel, so only around a hundred pixels fit in a frame.
+
+## Emulator
+
+The display list in `index.html` has "ZL-80 board (real hardware)". In that mode:
+
+- The Z80 runs 59,736 T-states per frame. The frame interrupt comes at line 192 (T-state 43,776), when the picture is finished.
+- Memory goes through the page mapper: 512 KB flash (cannot be written) and 512 KB RAM, which starts with random values.
+- Only the ports in the I/O table work. Any other port stops the program with an error. The 68B50 accepts output but has no input yet.
+- The PC keyboard is the MSX matrix (keys by position), and the on-screen pad and the arrow keys are joystick 1.
+- The emulator also stops on VRAM accesses that are too fast, a stack overflow, and `return` without `gosub`.
+
+Still to do:
+
+1. ROM and HEX download, and "Send to console" over Web Serial, with a serial loader in the kernel.
+2. Writing programs into flash from the console.
+3. A `bank` command for the extra RAM and flash pages.
 
 The existing display modules (OLED, TFT, Nokia, MC6845, MC6847) stay as fantasy modes for learning. They are not part of this board.
 

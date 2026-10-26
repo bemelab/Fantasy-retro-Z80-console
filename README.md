@@ -59,4 +59,6 @@ Other files: `cpc464/catch.bas` (a BASIC game for the Amstrad CPC464) and `docs/
 
 ## Real hardware
 
-`docs/hardware.md` is the plan for a real ZL-80 board: Z80, TMS9928A video, AY-3-8910 sound, 512 KB flash and 512 KB RAM, a keyboard and joysticks, and SCART output to a TV. The emulator will get a hardware mode that copies this board exactly.
+`docs/hardware.md` is the plan for a real ZL-80 board: Z80, TMS9928A video, AY-3-8910 sound, 512 KB flash and 512 KB RAM, a keyboard and joysticks, and SCART output to a TV.
+
+Pick **ZL-80 board (real hardware)** in the display list to run a program on an exact copy of that board: Z80 at 3.58 MHz, paged memory, a kernel ROM, only the real I/O ports, and the frame interrupt. A program that runs there is meant to run on the real board unchanged.

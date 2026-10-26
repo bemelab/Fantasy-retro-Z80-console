@@ -1339,7 +1339,7 @@ label st0
   es = 9
   bp = 18
   vreg 0 2
-  vreg 1 0xC1
+  vreg 1 0xE1
   vreg 2 6
   vreg 3 0xFF
   vreg 4 3
@@ -1380,7 +1380,7 @@ label st1
   es = 14
   bp = 12
   vreg 0 0
-  vreg 1 0xC1
+  vreg 1 0xE1
   vreg 2 5
   vreg 3 0x80
   vreg 4 0
@@ -1412,7 +1412,7 @@ label st2
   es = 12
   bp = 24
   vreg 0 0
-  vreg 1 0xD0
+  vreg 1 0xF0
   vreg 2 2
   vreg 4 0
   vreg 7 0xF4
@@ -1440,7 +1440,7 @@ label st3
   es = 10
   bp = 4
   vreg 0 0
-  vreg 1 0xC9
+  vreg 1 0xE9
   vreg 2 5
   vreg 4 0
   vreg 7 1
@@ -1723,7 +1723,7 @@ label drawbar
     plot xx y col
   end
   return`;
-const EXMOD={"MC6845 CRTC text and hardware scroll":4,"Graphics on CRTC, TMS9918 and MC6847":[5,6,7],"TMS9918A sprites and Graphics II":6,"Chip showcase: TMS9918A and AY-3-8910":6,"MC6847 text and semigraphics":7};
+const EXMOD={"MC6845 CRTC text and hardware scroll":4,"Graphics on CRTC, TMS9918 and MC6847":[5,6,7,8],"TMS9918A sprites and Graphics II":[6,8],"Chip showcase: TMS9918A and AY-3-8910":[6,8],"MC6847 text and semigraphics":7};
 const PAL=["#000000","#1d2b53","#7e2553","#008751","#ab5236","#5f574f","#c2c3c7","#fff1e8","#ff004d","#ffa300","#ffec27","#00e436","#29adff","#83769c","#ff77a8","#ffccaa"];
 const $=id=>document.getElementById(id);
 
@@ -1861,6 +1861,7 @@ function expand(src){
    const a=["_tx = "+m[1],"_ty = "+m[2],"_tc = "+m[3]];
    for(const ch of m[4].toUpperCase()){const c=ch.charCodeAt(0);a.push("_c = "+(c>=32&&c<96?c-32:0),"gosub _glyph","_tx = _tx + 4")}
    put(a)}
+  else if(MOD.hw&&(k==="tprint"||k==="vprint"))throw Error("line "+(i+1)+": "+k+" is for the MC6845 and MC6847 fantasy displays; the ZL-80 board has a TMS9928A");
   else if(k==="tprint"&&(m=/^tprint[\s,]+"([^"]*)"/i.exec(body))){put([...m[1]].map(ch=>"crtc 31 "+ch.charCodeAt(0)))}
   else if(k==="vprint"&&(m=/^vprint[\s,]+(\d+)[\s,]+(\d+)[\s,]+"([^"]*)"/i.exec(body))){const base=0x8000+(+m[2])*32+(+m[1]);put([...m[3].toUpperCase()].map((ch,j)=>{const c=ch.charCodeAt(0),cd=c>=64&&c<96?c-64:c>=32&&c<64?c:32,ad=base+j;return "poke "+(ad>>8)+" "+(ad&255)+" "+cd}))}
   else if(k==="data"&&w.length>2&&w[1]!=="="){put(w.slice(2).map((v,i)=>w[1]+"["+i+"] = "+v))}
@@ -1871,10 +1872,14 @@ function expand(src){
  if(lib.length)("stop\n; built-in routines used by sprite, print and seg\n"+lib.join("\n")).split("\n").forEach((s,j)=>out.push([s,L.length+j]));
  return out}
 function compile(src){
- const code=[],vars={},st=[];let nv=0;
- const e=(...b)=>code.push(...b);
- const V=n=>{if(!(n in vars)&&nv>=0x1000)throw Error("too many variables (4096 max)");return vars[n]??(vars[n]=0x4000+nv++)};
- const arrs={_spr:{pg:0x73,sh:3,two:1},_fa:{pg:0x70,sh:3,two:1},_fb:{pg:0x71,sh:3,two:1},_sg:{pg:0x72,sh:0,two:0}},labs={},fix=[];let na=0x50;
+ // fantasy: code at 0x0000, variables 0x4000, arrays from page 0x50, font at 0x7000. ZL-80 board: code 0x4000 (RAM 32-33),
+ // variables 0xC000, arrays from page 0xC4, sprite rows 0xF000, stack 0xF100-0xFEFF, font in the kernel at 0x3000
+ const HW=!!MOD.hw,TG=HW?{org:0x4000,vars:0xC000,nv:0x400,a0:0xC4,a1:0xEF,f:0x30,spr:0xF0,max:0x8000}:{org:0,vars:0x4000,nv:0x1000,a0:0x50,a1:0x6F,f:0x70,spr:0x73,max:0x4000};
+ if(HW)KER=KER||buildKernel();
+ const code=[],vars={},st=[],ORG=TG.org;let nv=0;LORG=ORG;
+ const e=(...b)=>code.push(...b),here=()=>ORG+code.length;
+ const V=n=>{if(!(n in vars)&&nv>=TG.nv)throw Error("too many variables ("+TG.nv+" max)");return vars[n]??(vars[n]=TG.vars+nv++)};
+ const arrs={_spr:{pg:TG.spr,sh:3,two:1},_fa:{pg:TG.f,sh:3,two:1},_fb:{pg:TG.f+1,sh:3,two:1},_sg:{pg:TG.f+2,sh:0,two:0}},labs={},fix=[];let na=TG.a0;
  const AR=n=>{if(!(n in arrs))throw Error("unknown array "+n);return arrs[n]};
  const map=[];LMAP=map;
  const adr=t=>{const m=t.split(/[\[\]]+/),a=AR(m[0]);
@@ -1882,7 +1887,7 @@ function compile(src){
   else{if(a.two)throw Error(m[0]+" needs two indexes");ld(m[1])}
   e(0x6F,0x26,a.pg)};
  const ld=t=>{
-  if(t==="rnd")e(0xDB,1);
+  if(t==="rnd"){if(HW)call("RND");else e(0xDB,1)}
   else if(/^(\d+|0x[0-9a-f]+)$/i.test(t)){if(+t>255)throw Error("number "+t+" is too big (0 to 255)");e(0x3E,+t)}
   else if(/^[a-z_]\w*\[\w+\](\[\w+\])?$/i.test(t)){adr(t);e(0x7E)}
   else if(/^[a-z_]\w*$/i.test(t)){const a=V(t);e(0x3A,a&255,a>>8)}
@@ -1892,6 +1897,30 @@ function compile(src){
   else if(t.length===3&&"+-&|^".includes(t[1])){ld(t[2]);e(0x47);ld(t[0]);e({"+":0x80,"-":0x90,"&":0xA0,"|":0xB0,"^":0xA8}[t[1]])}
   else throw Error("bad expression")};
  const patch=(p,a)=>{code[p]=a&255;code[p+1]=a>>8};
+ const call=n=>{const a=KER.s[n];e(0xCD,a&255,a>>8)},st16=a=>e(0x32,a&255,a>>8),setV=n=>{const a=V(n);e(0x32,a&255,a>>8)};
+ const num=x=>/^(\d+|0x[0-9a-f]+)$/i.test(x);
+ // ZL-80 board: devices are reached through the kernel routines, with their arguments in ARGX, ARGY and A
+ const hwStmt=(k,t)=>{switch(k){
+  case "plot":ld(t[1]);st16(K_ARGX);ld(t[2]);st16(K_ARGY);ld(t[3]);call("PLOT");return 1;
+  case "get":ld(t[2]);st16(K_ARGX);ld(t[3]);st16(K_ARGY);call("GET");setV(t[1]);return 1;
+  case "cls":e(0x3E,0);call("FILL");return 1;
+  case "fill":ld(t[1]);call("FILL");return 1;
+  case "key":call("KEY");setV(t[1]);return 1;
+  case "beep":ld(t[1]);call("BEEP");return 1;
+  case "vreg":if(num(t[1])&&+t[1]===1&&num(t[2])&&!(+t[2]&0x20))throw Error("keep bit 5 (0x20) set in VDP register 1: it turns on the frame interrupt, and without it wait never ends");
+   ld(t[1]);st16(K_ARGX);ld(t[2]);call("VREG");return 1;
+  case "vaddr":ld(t[2]);st16(K_ARGX);ld(t[1]);call("VAW");return 1;
+  case "vrd":ld(t[2]);st16(K_ARGX);ld(t[1]);call("VAR");return 1;
+  case "vdata":ld(t[1]);call("VWR");return 1;
+  case "vget":call("VRD");setV(t[1]);return 1;
+  case "vstat":e(0x3A,K_STAT&255,K_STAT>>8);setV(t[1]);return 1;
+  case "vfont":call("VFONT");return 1;
+  case "ay":ld(t[1]);st16(K_ARGX);ld(t[2]);call("AYW");return 1;
+  case "ayget":ld(t[2]);call("AYRD");setV(t[1]);return 1;
+  case "note":ld(t[1]);st16(K_ARGX);ld(t[2]);call("NOTE");return 1;
+  case "crtc":case "crtcget":case "tcolor":case "locate":case "thex":case "tcls":case "vdg":case "vbase":
+   throw Error(k+" is for the MC6845 and MC6847 fantasy displays; the ZL-80 board has a TMS9928A")}
+  return 0};
  const jp=op=>{e(op,0,0);return code.length-2};
  const cond=(a,o,b)=>{let j;
   if(o==="<"||o===">="){ld(b);e(0x47);ld(a);e(0xB8);j=o==="<"?0xD2:0xDA}
@@ -1906,9 +1935,10 @@ function compile(src){
   if(!t)return;
   const k=t[0].toLowerCase();
   // plot and get keep the pixel address in HL, and array items use HL too, so copy array items into helper variables first
-  if((k==="plot"||k==="get")&&t[1]!=="=")for(let q=k==="get"?2:1;q<t.length;q++)if(t[q].includes("[")){ld(t[q]);const a=V("_q"+q);e(0x32,a&255,a>>8);t[q]="_q"+q}
+  if((k==="plot"||k==="get")&&t[1]!=="="&&!HW)for(let q=k==="get"?2:1;q<t.length;q++)if(t[q].includes("[")){ld(t[q]);const a=V("_q"+q);e(0x32,a&255,a>>8);t[q]="_q"+q}
   if(t[1]==="="){ex(t.slice(2));const am=/\[/.test(t[0]);
    if(am){e(0x47);adr(t[0]);e(0x70)}else{const a=V(t[0]);e(0x32,a&255,a>>8)}}
+  else if(HW&&hwStmt(k,t)){}
   else if(MOD.assist&&k==="plot"){ld(t[1]);e(0xD3,10);ld(t[2]);e(0xD3,11);ld(t[3]);e(0xD3,12)}
   else if(MOD.assist&&k==="get"){ld(t[2]);e(0xD3,10);ld(t[3]);e(0xD3,11);e(0xDB,12);const a=V(t[1]);e(0x32,a&255,a>>8)}
   else if(MOD.assist&&k==="cls"){e(0x3E,0,0xD3,13)}
@@ -1918,20 +1948,20 @@ function compile(src){
    ld(t[1]);e(0xE6,MOD.xm,0x85,0x6F,0x7C,0xF6,0x80,0x67);
    ld(t[3]);e(0xE6,15,0x77)}
   else if(k==="key"){e(0xDB,0);const a=V(t[1]);e(0x32,a&255,a>>8)}
-  else if(k==="cls"){e(0x21,0,0x80);const s=code.length;e(0x36,0,0x23,0x7C,0xFE,MOD.hi,0xC2,s&255,s>>8)}
+  else if(k==="cls"){e(0x21,0,0x80);const s=here();e(0x36,0,0x23,0x7C,0xFE,MOD.hi,0xC2,s&255,s>>8)}
   else if(k==="wait"){ld(t[1]);e(0x47,0x76,0x10,0xFD)}
-  else if(k==="while"){const s=code.length;st.push({k:"w",s,j:cond(t[1],t[2],t[3])})}
+  else if(k==="while"){const s=here();st.push({k:"w",s,j:cond(t[1],t[2],t[3])})}
   else if(k==="if"){st.push({k:"i",j:cond(t[1],t[2],t[3])})}
-  else if(k==="else"){const b=st.pop();if(!b||b.k!=="i")throw Error("else without if");const j=jp(0xC3);patch(b.j,code.length);st.push({k:"e",j})}
-  else if(k==="end"){const b=st.pop();if(!b)throw Error("end without block");if(b.k==="f"){const a=V(b.v);e(0x3A,a&255,a>>8,0x3C,0x32,a&255,a>>8)}if(b.k==="w"||b.k==="f")e(0xC3,b.s&255,b.s>>8);patch(b.j,code.length)}
-  else if(k==="dim"){const d1=+t[2],d2=t[3]?+t[3]:0;if(!(d1>0)||d1*(d2||1)>256)throw Error("array too big (256 items max)");if(na>0x6F)throw Error("too many arrays (32 max)");
+  else if(k==="else"){const b=st.pop();if(!b||b.k!=="i")throw Error("else without if");const j=jp(0xC3);patch(b.j,here());st.push({k:"e",j})}
+  else if(k==="end"){const b=st.pop();if(!b)throw Error("end without block");if(b.k==="f"){const a=V(b.v);e(0x3A,a&255,a>>8,0x3C,0x32,a&255,a>>8)}if(b.k==="w"||b.k==="f")e(0xC3,b.s&255,b.s>>8);patch(b.j,here())}
+  else if(k==="dim"){const d1=+t[2],d2=t[3]?+t[3]:0;if(!(d1>0)||d1*(d2||1)>256)throw Error("array too big (256 items max)");if(na>TG.a1)throw Error("too many arrays ("+(TG.a1-TG.a0+1)+" max)");
    if(d2){const sh=Math.log2(d2);if(!Number.isInteger(sh))throw Error("second size must be 1, 2, 4, 8, 16, 32, 64 or 128");arrs[t[1]]={pg:na++,sh,two:1}}else arrs[t[1]]={pg:na++,sh:0,two:0}}
-  else if(k==="label"){labs[t[1]]=code.length}
+  else if(k==="label"){labs[t[1]]=here()}
   else if(k==="goto"||k==="gosub"){e(k==="goto"?0xC3:0xCD,0,0);fix.push([code.length-2,t[1]])}
   else if(k==="return"){e(0xC9)}
-  else if(k==="for"){const a=V(t[1]);ld(t[3]);e(0x32,a&255,a>>8);const s=code.length;st.push({k:"f",s,v:t[1],j:cond(t[1],"<",t[5])})}
+  else if(k==="for"){const a=V(t[1]);ld(t[3]);e(0x32,a&255,a>>8);const s=here();st.push({k:"f",s,v:t[1],j:cond(t[1],"<",t[5])})}
   else if(k==="inc"||k==="dec"){const a=V(t[1]);ld(t[1]);e(k==="inc"?0x3C:0x3D,0x32,a&255,a>>8)}
-  else if(k==="fill"){ld(t[1]);e(0xE6,15,0x47,0x21,0,0x80);const s=code.length;e(0x70,0x23,0x7C,0xFE,MOD.hi,0xC2,s&255,s>>8)}
+  else if(k==="fill"){ld(t[1]);e(0xE6,15,0x47,0x21,0,0x80);const s=here();e(0x70,0x23,0x7C,0xFE,MOD.hi,0xC2,s&255,s>>8)}
   else if(k==="get"){ld(t[3]);e(0xE6,MOD.ym,0x6F,0x26,0,...Array(MOD.sw).fill(0x29));ld(t[2]);e(0xE6,MOD.xm,0x85,0x6F,0x7C,0xF6,0x80,0x67,0x7E);const a=V(t[1]);e(0x32,a&255,a>>8)}
   else if(k==="beep"){ld(t[1]);e(0xD3,2)}
   else if(k==="crtc"){ld(t[1]);e(0xD3,3);ld(t[2]);e(0xD3,4)}
@@ -1954,14 +1984,16 @@ function compile(src){
   else if(k==="vget"){e(0xDB,14);const a=V(t[1]);e(0x32,a&255,a>>8)}
   else if(k==="vrd"){ld(t[2]);e(0xD3,15);ld(t[1]);e(0xD3,15)}
   else if(k==="vfont"){e(0xD3,22)}
-  else if(k==="stop"){const h=code.length;e(0x76,0xC3,h&255,h>>8)}
+  else if(k==="stop"){const h=here();e(0x76,0xC3,h&255,h>>8)}
   else throw Error("unknown statement "+t[0]);
  }catch(x){throw Error("line "+(i+1)+": "+x.message)}});
  if(st.length)throw Error("missing end");
  for(const [p,n] of fix){if(!(n in labs))throw Error("unknown label "+n);patch(p,labs[n])}
- LINFO="; variables: "+(Object.entries(vars).map(([k,v])=>k+"=$"+v.toString(16).toUpperCase()).join(" ")||"none")+"\n; arrays: "+(Object.entries(arrs).map(([k,v])=>k+"=$"+(v.pg*256).toString(16).toUpperCase()).join(" ")||"none")+"\n; display: "+MOD.c+", video RAM $8000, stride "+(1<<MOD.sw)+" bytes per row\n; stack below $8000, ports: 0 keys, 1 random, 2 beep";
- const h=code.length;e(0x76,0xC3,h&255,h>>8);
- if(code.length>0x4000)throw Error("program too big ("+code.length+" bytes, 16384 max)");
+ LINFO="; variables: "+(Object.entries(vars).map(([k,v])=>k+"=$"+v.toString(16).toUpperCase()).join(" ")||"none")+"\n; arrays: "+(Object.entries(arrs).map(([k,v])=>k+"=$"+(v.pg*256).toString(16).toUpperCase()).join(" ")||"none")+"\n; "+(HW
+  ?"ZL-80 board: program at $4000 (RAM pages 32-33), stack $F100-$FEFF; kernel calls: "+Object.entries(KER.s).filter(([n])=>/^[A-Z]/.test(n)&&!["ISR","START","VINIT","VFILL","POFS","PWR"].includes(n)).map(([n,a])=>n+"=$"+hx(a,4)).join(" ")
+  :"display: "+MOD.c+", video RAM $8000, stride "+(1<<MOD.sw)+" bytes per row\n; stack below $8000, ports: 0 keys, 1 random, 2 beep");
+ const h=here();e(0x76,0xC3,h&255,h>>8);
+ if(code.length>TG.max)throw Error("program too big ("+code.length+" bytes, "+TG.max+" max)");
  return code}
 
 const MODS=[
@@ -1972,16 +2004,18 @@ const MODS=[
  {n:"MC6845 CRTC text 80x25",c:"MC6845 / HD6845 / R6545 style CRTC with text RAM, default 80x25 cells of 8x8 (program it with crtc, locate, tprint)",w:64,h:64,sw:6,xm:63,ym:63,hi:0x90,mono:0,crtc:1},
  {n:"MC6845 CRTC graphics 128x64",c:"MC6845 CRTC addressing pixel RAM: R1 x 8 pixels wide, R6 x (R9+1) tall, R12/R13 scroll, 16 colors",w:128,h:64,sw:7,xm:127,ym:255,hi:0xA0,mono:0,crtc:2},
  {n:"TMS9918A VDP 256x192 + border",c:"TMS9918A VDP: 256x192 plus border, 16 colors, Graphics I/II, Text 40x24, Multicolor, 32 sprites, status flags, 16 KB VRAM",w:272,h:208,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"tms"},
- {n:"MC6847 VDG 256x192",c:"MC6847 VDG: text, semigraphics and 8 graphics modes, 4:3 (port 16 mode, port 17 video base)",w:256,h:192,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"vdg"}];
+ {n:"MC6847 VDG 256x192",c:"MC6847 VDG: text, semigraphics and 8 graphics modes, 4:3 (port 16 mode, port 17 video base)",w:256,h:192,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"vdg"},
+ {n:"ZL-80 board (real hardware)",c:"ZL-80 board, docs/hardware.md: Z80 at 3.58 MHz, 512 KB flash + 512 KB RAM in 16 KB pages, TMS9928A on ports 98h/99h with the frame interrupt, AY-3-8910 on A0h-A2h, MSX keyboard matrix on the 8255. Only what the real board can do.",w:272,h:208,sw:7,xm:127,ym:255,hi:0xA0,mono:0,hw:1}];
 let MOD=MODS[0];
 const mem=new Uint8Array(65536);
 const GL={" ":"00000","0":"75557","1":"26227","2":"71747","3":"71717","4":"55711","5":"74717","6":"74757","7":"71111","8":"75757","9":"75717",":":"02020",".":"00002","-":"00700","+":"02720","!":"22202","?":"71202",",":"00024","=":"07070","/":"11244",A:"25755",B:"65656",C:"34443",D:"65556",E:"74647",F:"74644",G:"34553",H:"55755",I:"72227",J:"11152",K:"55655",L:"44447",M:"57755",N:"65555",O:"25552",P:"65644",Q:"25573",R:"65655",S:"34216",T:"72222",U:"55557",V:"55552",W:"55775",X:"55255",Y:"55222",Z:"71247"};
 const ROM=new Uint8Array(0x300);
 for(let c=32;c<96;c++){const g=GL[String.fromCharCode(c)]||"00000";for(let r=0;r<5;r++)ROM[(c-32)*8+r]=parseInt(g[r],8)}
 ;[0x3F,0x06,0x5B,0x4F,0x66,0x6D,0x7D,0x07,0x7F,0x6F,0x77,0x7C,0x39,0x5E,0x79,0x71].forEach((v,i)=>ROM[0x200+i]=v);
-let keys=0,bad=null,busy=0,actx=null,lastBeep=0,LMAP=[],LINFO="";
+let keys=0,bad=null,busy=0,actx=null,lastBeep=0,LMAP=[],LINFO="",LORG=0;
 const BUDGET=Math.round(4e6/60),STACKMIN=0x7400;
-const cpu=Z80({rd:a=>mem[a],wr:(a,v)=>{mem[a]=v},in:p=>portIn(p&255),out:(p,v)=>portOut(p&255,v)});
+const fzCpu=Z80({rd:a=>mem[a],wr:(a,v)=>{mem[a]=v},in:p=>portIn(p&255),out:(p,v)=>portOut(p&255,v)});
+let cpu=fzCpu;
 function portIn(p){return p===0?keys:p===1?(Math.random()*256|0):p===4?(crSel>=12&&crSel<=17?CR[crSel]:0):p===12?assistGet():p===14?tmsRead():p===15?tmsStatus():p===19?ayRead():0}
 function portOut(p,v){if(p===2)beep(v);else crtcOut(p,v)}
 function boot(code){mem.fill(0);mem.set(code,0);mem.set(ROM,0x7000);crtcReset();tmsReset();cpu.reset();cpu.a=cpu.f=0;cpu.sp=0x8000;cpu.cyc=0;bad=null}
@@ -1992,13 +2026,156 @@ function step(){
  if(op===0xC9&&cpu.sp>=0x8000){bad="return without gosub at 0x"+cpu.pc.toString(16);cpu.halted=true;return}
  cpu.step()}
 
-const DIS={0x00:"NOP|do nothing",0x3E:"LD A,%n|A = number",0x3A:"LD A,(%w)|A = variable",0x32:"LD (%w),A|store A in variable",0x47:"LD B,A|B = A (second operand)",0x4F:"LD C,A|C = A (column index)",0x6F:"LD L,A|L = A (low address byte)",0x67:"LD H,A|H = A",0x7C:"LD A,H|A = H",0x26:"LD H,%n|H = page (high address byte)",0x21:"LD HL,%w|HL = address",0x23:"INC HL|next address",0x29:"ADD HL,HL|HL = HL * 2",0x77:"LD (HL),A|write A to memory",0x70:"LD (HL),B|write B to memory",0x7E:"LD A,(HL)|read memory into A",0x36:"LD (HL),%n|write number to memory",0x80:"ADD A,B|A = A + B",0x81:"ADD A,C|A = A + C",0x85:"ADD A,L|A = A + L",0x87:"ADD A,A|A = A * 2",0x90:"SUB B|A = A - B",0xA0:"AND B|A = A and B",0xA8:"XOR B|A = A xor B",0xB0:"OR B|A = A or B",0xB8:"CP B|compare A with B",0xE6:"AND %n|mask bits of A",0xF6:"OR %n|set bits in A",0xFE:"CP %n|compare A with number",0x3C:"INC A|A = A + 1",0x3D:"DEC A|A = A - 1",0xC3:"JP %w|jump",0xC2:"JP NZ,%w|jump if not equal",0xCA:"JP Z,%w|jump if equal",0xD2:"JP NC,%w|jump if no carry (A >= B)",0xDA:"JP C,%w|jump if carry (A < B)",0xCD:"CALL %w|call subroutine",0xC9:"RET|return from subroutine",0x10:"DJNZ %e|B = B - 1, loop until zero",0xDB:"IN A,(%n)|read port (0 keys, 1 random)",0xD3:"OUT (%n),A|write port (2 beep)",0x76:"HALT|wait for next frame"};
+/* ZL-80 board (docs/hardware.md). Z80 at 3.58 MHz; 512 KB flash (pages 0-31) and 512 KB RAM (pages 32-63) behind four 16 KB
+   page registers; TMS9928A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; 68B50 on 0x80/0x81.
+   Kernel RAM: 0xFF00 ARGX, 0xFF01 ARGY, 0xFF02 last VDP status, 0xFF03 random seed, 0xFF10-0xFF17 copies of VDP registers R0-R7. */
+const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_VRS=0xFF10;
+let KER=null;
+// kernel ROM, flash page 0: start-up, interrupt handler and the routines compiled ZL calls; tables from 0x3000
+function buildKernel(){
+ const k=new Uint8Array(0x4000).fill(0xFF),s={},fix=[];let p=0;
+ const b=(...v)=>{for(const x of v)k[p++]=x&255},nn=v=>b(v&255,v>>8),lab=n=>{s[n]=p};
+ const w=n=>{fix.push([p,n,0]);p+=2},r=n=>{fix.push([p,n,1]);p++}; // label address, JR/DJNZ displacement
+ // reset: paging is off, so flash page 0 shows in every bank
+ b(0xF3);                                                                  // DI
+ [[0x78,0],[0x79,32],[0x7A,33],[0x7B,34],[0x7C,1]].forEach(([port,v])=>b(0x3E,v,0xD3,port)); // flash 0, RAM 32 33 34, paging on
+ b(0xC3);w("START");
+ p=0x38;lab("ISR");                                                        // IM 1: once per frame
+ b(0xF5,0xDB,0x99,0x32);nn(K_STAT);b(0xF1,0xFB,0xED,0x4D);                 // PUSH AF; IN A,(99h) clears the interrupt; LD (stat),A; POP AF; EI; RETI
+ lab("START");
+ b(0x21);nn(0xC000);b(0x11);nn(0xC001);b(0x01);nn(0x3FFF);b(0x36,0,0xED,0xB0); // RAM 0xC000-0xFFFF = 0 (variables start at 0)
+ b(0x31);nn(0xFF00);b(0xED,0x56);                                         // LD SP,FF00h; IM 1
+ b(0x3E,0x82,0xD3,0xAB,0x3E,0x08,0xD3,0xAA);                               // 8255: A out, B in, C out; keyboard row 8
+ b(0x3E,7,0xD3,0xA0,0x3E,0xBF,0xD3,0xA1);                                  // AY R7: sound off, port A in (joysticks), port B out
+ b(0x21);w("VINIT");b(0x11);nn(K_VRS);b(0x01);nn(8);b(0xED,0xB0);          // RAM copies of R0-R7
+ b(0x21);nn(K_VRS);b(0x0E,0x80);lab("vr");b(0x7E,0xD3,0x99,0x79,0xD3,0x99,0x23,0x0C,0x79,0xFE,0x88,0x20);r("vr"); // write R0-R7 (display off)
+ b(0xAF,0xD3,0x99,0x3E,0x40,0xD3,0x99,0x11);nn(0x4000);b(0x26,0x00,0xCD);w("VFILL"); // VRAM 0000h-3FFFh = 0
+ b(0xAF,0xD3,0x99,0x3E,0x58,0xD3,0x99,0x21);nn(0);lab("nt");b(0x7D,0xD3,0x98,0x23,0x7C,0xFE,0x03,0x20);r("nt"); // name table 1800h: 0-255 three times
+ b(0xAF,0xD3,0x99,0x3E,0x60,0xD3,0x99,0x11);nn(0x1800);b(0x26,0xF1,0xCD);w("VFILL"); // colour table 2000h: white on black
+ b(0xAF,0xD3,0x99,0x3E,0x5B,0xD3,0x99,0x3E,0xD0,0xD3,0x98);               // sprite table 1B00h: D0h ends the list
+ b(0x21);nn(0xACE1);b(0x22);nn(K_SEED);
+ b(0x3E,0xE0,0x32);nn(K_VRS+1);b(0xD3,0x99,0x3E,0x81,0xD3,0x99);           // R1 = E0h: display on, frame interrupt on
+ b(0x3E,1,0xD3,0x7A,0x3A);nn(0x8000);b(0xFE,0xFF,0x28);r("noprog");       // flash page 1 in bank 2; erased flash (FFh) means no program
+ b(0x21);nn(0x8000);b(0x11);nn(0x4000);b(0x01);nn(0x4000);b(0xED,0xB0);   // flash 1 -> RAM 32 (0x4000)
+ b(0x3E,33,0xD3,0x79,0x3E,2,0xD3,0x7A);                                    // bank 1 = RAM 33, bank 2 = flash 2
+ b(0x21);nn(0x8000);b(0x11);nn(0x4000);b(0x01);nn(0x4000);b(0xED,0xB0);   // flash 2 -> RAM 33
+ b(0x3E,32,0xD3,0x79,0x3E,33,0xD3,0x7A,0xFB,0xC3);nn(0x4000);             // RAM 32 and 33 back in banks 1 and 2; EI; run the program
+ lab("noprog");b(0x3E,33,0xD3,0x7A,0xFB);lab("idle");b(0x76,0x18);r("idle");
+ lab("VINIT");b(0x02,0x80,0x06,0xFF,0x03,0x36,0x07,0x01);                  // Graphics II, 16 KB, display off; tables as in the TMS9918A fantasy mode
+ // VRAM writes stay at least 8 us (29 T-states) apart, as the TMS9918A needs during the active display
+ lab("VFILL");b(0x7C,0xD3,0x98,0x1B,0x7A,0xB3,0x20);r("VFILL");b(0xC9);    // H = value, DE = count: 41 T per byte
+ // pixel at ARGX, ARGY (y < 192): L = offset low byte, E = bit mask, D / H = pattern / colour address high byte
+ lab("POFS");b(0x3A);nn(K_ARGY);b(0x47,0x0F,0x0F,0x0F,0xE6,0x1F,0x4F);    // B = y; C = y >> 3
+ b(0x3A);nn(K_ARGX);b(0xE6,0xF8,0x6F,0x78,0xE6,0x07,0xB5,0x6F);            // L = (x & F8h) | (y & 7)
+ b(0x3A);nn(K_ARGX);b(0xE6,0x07,0x47,0x1E,0x80,0x28);r("pmd");lab("pm");b(0xCB,0x3B,0x10);r("pm");lab("pmd"); // E = 80h >> (x & 7)
+ b(0x3A);nn(K_VRS+4);b(0xE6,0x04,0x07,0x07,0x07,0x81,0x57);               // D = pattern table (R4 bit 2: 2000h) + y >> 3
+ b(0x3A);nn(K_VRS+3);b(0xE6,0x80,0x0F,0x0F,0x81,0x67,0xC9);               // H = colour table (R3 bit 7: 2000h) + y >> 3
+ lab("PLOT");b(0xF5,0x3A);nn(K_ARGY);b(0xFE,192,0x38,0x02,0xF1,0xC9,0xCD);w("POFS"); // A = colour; off the screen: nothing
+ b(0xF1,0xE6,0x0F,0x4F,0xF3,0x7D,0xD3,0x99,0x7A,0xD3,0x99,0xE3,0xE3,0xDB,0x98,0x47); // C = colour; DI; read the pattern byte into B
+ b(0x79,0xB7,0x28);r("pclr");b(0x78,0xB3,0x47,0xCD);w("PWR");             // colour 0 clears the bit, others set it
+ b(0x00,0x7D,0xD3,0x99,0x7C,0xD3,0x99,0x79,0x07,0x07,0x07,0x07,0x4F);      // read the colour byte; C = colour << 4
+ b(0xDB,0x98,0xE6,0x0F,0xB1,0x47,0x54,0xCD);w("PWR");b(0xFB,0xC9);        // foreground = colour, keep background; EI
+ lab("pclr");b(0x7B,0x2F,0xA0,0x47,0xCD);w("PWR");b(0xFB,0xC9);
+ lab("PWR");b(0x7D,0xD3,0x99,0x7A,0xF6,0x40,0xD3,0x99,0x78,0xD3,0x98,0xC9); // write B at D:L
+ lab("GET");b(0x3A);nn(K_ARGY);b(0xFE,192,0x38,0x02,0xAF,0xC9,0xCD);w("POFS"); // A = colour of the pixel, 0 if unset
+ b(0xF3,0x7D,0xD3,0x99,0x7A,0xD3,0x99,0xE3,0xE3,0xDB,0x98,0xA3,0x28);r("gz");
+ b(0x7D,0xD3,0x99,0x7C,0xD3,0x99,0xE3,0xE3,0xDB,0x98,0x0F,0x0F,0x0F,0x0F,0xE6,0x0F,0xFB,0xC9);
+ lab("gz");b(0xAF,0xFB,0xC9);
+ lab("FILL");b(0xE6,0x0F,0x4F,0x3A);nn(K_VRS+4);b(0xE6,0x04,0x07,0x07,0x07,0xF6,0x40,0x47); // A = colour; pattern table
+ b(0xF3,0xAF,0xD3,0x99,0x78,0xD3,0x99,0xFB,0x26,0x00,0x79,0xB7,0x28,0x02,0x26,0xFF,0x11);nn(0x1800);b(0xCD);w("VFILL");
+ b(0x3A);nn(K_VRS+3);b(0xE6,0x80,0x0F,0x0F,0xF6,0x40,0x47,0xF3,0xAF,0xD3,0x99,0x78,0xD3,0x99,0xFB); // colour table
+ b(0x26,0xF1,0x79,0xB7,0x28,0x07,0x07,0x07,0x07,0x07,0xF6,0x01,0x67,0x11);nn(0x1800);b(0xCD);w("VFILL");b(0xC9);
+ lab("KEY");b(0xDB,0xAA,0xE6,0xF0,0xF6,0x08,0xD3,0xAA,0xDB,0xA9,0x2F,0x47,0x0E,0x00); // keyboard row 8, 1 = pressed
+ [[4,0],[7,1],[5,2],[6,3],[0,4]].forEach(([n,m])=>b(0xCB,0x40|n<<3,0x28,0x02,0xCB,0xC1|m<<3)); // left right up down space
+ b(0x3E,14,0xD3,0xA0,0xDB,0xA2,0x2F,0x47);                                  // joystick 1 on AY port A
+ [[2,0],[3,1],[0,2],[1,3],[4,4]].forEach(([n,m])=>b(0xCB,0x40|n<<3,0x28,0x02,0xCB,0xC1|m<<3));
+ b(0x79,0xC9);                                                              // A = 1 left, 2 right, 4 up, 8 down, 16 fire
+ lab("RND");b(0xE5,0x2A);nn(K_SEED);b(0xCB,0x3C,0xCB,0x1D,0x30,0x04,0x7C,0xEE,0xB4,0x67,0x22);nn(K_SEED); // 16-bit LFSR
+ b(0xED,0x5F,0xAD,0xE1,0xC9);                                               // mixed with R; keeps HL, B, C, D, E
+ lab("BEEP");b(0x6F,0x26,0x00,0x29,0x11);nn(0x3500);b(0x19);               // A = pitch; channel C with a short decay
+ b(0x3E,4,0xD3,0xA0,0x7E,0xD3,0xA1,0x23,0x3E,5,0xD3,0xA0,0x7E,0xD3,0xA1,0x3E,10,0xD3,0xA0,0x3E,0x10,0xD3,0xA1);
+ b(0x3E,11,0xD3,0xA0,0x3E,0x2F,0xD3,0xA1,0x3E,12,0xD3,0xA0,0x3E,0x02,0xD3,0xA1);
+ b(0x3E,7,0xD3,0xA0,0xDB,0xA2,0xE6,0x3B,0xF6,0x80,0xD3,0xA1,0x3E,13,0xD3,0xA0,0xAF,0xD3,0xA1,0xC9);
+ lab("NOTE");b(0x6F,0x26,0x00,0x29,0x11);nn(0x3700);b(0x19,0x3A);nn(K_ARGX);// ARGX = channel, A = MIDI note
+ lab("nm");b(0xFE,3,0x38,0x04,0xD6,3,0x18);r("nm");
+ b(0x87,0x4F,0x79,0xD3,0xA0,0x7E,0xD3,0xA1,0x23,0x0C,0x79,0xD3,0xA0,0x7E,0xD3,0xA1,0xC9);
+ lab("AYW");b(0x47,0x3A);nn(K_ARGX);b(0xE6,0x0F,0xD3,0xA0,0xFE,7,0x78,0x20,0x04,0xE6,0x3F,0xF6,0x80,0xD3,0xA1,0xC9); // R7 keeps port A in, port B out
+ lab("AYRD");b(0xE6,0x0F,0xD3,0xA0,0xDB,0xA2,0xC9);
+ lab("VREG");b(0x47,0x3A);nn(K_ARGX);b(0xE6,0x07,0x4F,0x21);nn(K_VRS);b(0x7D,0x81,0x6F,0x70); // ARGX = register, A = value
+ b(0xF3,0x78,0xD3,0x99,0x79,0xF6,0x80,0xD3,0x99,0xFB,0xC9);
+ lab("VAW");b(0xF6,0x40);lab("VAR");b(0x47,0x3A);nn(K_ARGX);b(0xF3,0xD3,0x99,0x78,0xD3,0x99,0xFB,0xC9); // A = high, ARGX = low
+ lab("VWR");b(0xD3,0x98,0xC9);lab("VRD");b(0xDB,0x98,0xC9);
+ lab("VFONT");b(0x3A);nn(K_VRS+4);b(0xE6,0x07,0x07,0x07,0x07,0x3C,0xF6,0x40,0x47,0xF3,0xAF,0xD3,0x99,0x78,0xD3,0x99,0xFB);
+ b(0x21);nn(0x3300);b(0x11);nn(512);lab("vf");b(0x7E,0xD3,0x98,0x23,0x1B,0x7A,0xB3,0x20);r("vf");b(0xC9); // characters 32-95
+ if(p>0x3000)throw Error("kernel code too big");
+ for(const [q,n,rel] of fix){const t=s[n];if(rel){const d=t-(q+1);if(d<-128||d>127)throw Error("jump out of range: "+n);k[q]=d&255}else{k[q]=t&255;k[q+1]=t>>8}}
+ k.set(ROM,0x3000);                                                         // 3x5 font and seven-segment table, as at 0x7000 in fantasy mode
+ for(let n=32;n<96;n++)for(let y=0;y<8;y++){const gy=y===0||y===7?-1:((y-1)*5/6)|0,v=gy<0?0:ROM[(n-32)*8+gy]&7;k[0x3300+(n-32)*8+y]=(((v&4)?0x30:0)|((v&2)?0x0C:0)|((v&1)?3:0))<<2}
+ const per=f=>Math.max(1,Math.min(4095,Math.round(1789773/16/f)));
+ for(let n=0;n<256;n++){const bp=per(110+n*12),np=per(440*Math.pow(2,(n-69)/12));k[0x3500+n*2]=bp&255;k[0x3501+n*2]=bp>>8;k[0x3700+n*2]=np&255;k[0x3701+n*2]=np>>8}
+ return {rom:k,s}}
+const phys=new Uint8Array(0x100000),pgReg=new Uint8Array(4),bankOff=new Int32Array(4),kbm=new Uint8Array(11);
+let pgOn=0,ppiA=0,ppiC=0,hwF0=0,vLast=-1e9,hwIdle=0,serialOut="";
+function remap(){for(let i=0;i<4;i++)bankOff[i]=(pgOn?pgReg[i]&63:0)<<14}
+const hwCpu=Z80({rd:a=>phys[bankOff[a>>14]|a&0x3FFF],wr:(a,v)=>{const o=bankOff[a>>14];if(o>=0x80000)phys[o|a&0x3FFF]=v},in:p=>hwIn(p&255),out:(p,v)=>hwOut(p&255,v)});
+function hwFault(m){if(!bad)bad=m+" (PC 0x"+hx(cpu.pc,4)+")"}
+function vdpAccess(){ // the TMS9918A needs 8 us between VRAM accesses during the active display, 2 us otherwise
+ const pos=cpu.cyc-hwF0,need=(VR[1]&0x40)&&pos<HWVBL?29:8,gap=cpu.cyc-vLast;
+ if(gap<need)hwFault("VRAM accesses only "+gap+" T-states apart; the TMS9928A needs "+need+(need>8?" during the active display":""));
+ vLast=cpu.cyc}
+const joyPort=()=>AYR[15]&0x40?0xFF:~((keys&4?1:0)|(keys&8?2:0)|(keys&1?4:0)|(keys&2?8:0)|(keys&16?16:0))&255;
+function hwIn(p){
+ switch(p){
+  case 0x80:return 0x02; // 68B50 status: ready to send, nothing received
+  case 0x81:return 0;
+  case 0x98:vdpAccess();return tmsRead();
+  case 0x99:return tmsStatus();
+  case 0xA2:return ayRead();
+  case 0xA8:return ppiA;
+  case 0xA9:return (ppiC&15)<11?~kbm[ppiC&15]&255:0xFF;
+  case 0xAA:return ppiC}
+ hwFault("IN from port 0x"+hx(p,2)+", which the ZL-80 board does not have");return 0xFF}
+function hwOut(p,v){
+ if(p>=0x78&&p<=0x7B){pgReg[p-0x78]=v&63;remap();return}
+ switch(p){
+  case 0x7C:pgOn=v&1;remap();return;
+  case 0x80:return;
+  case 0x81:serialOut+=String.fromCharCode(v);return;
+  case 0x98:vdpAccess();ioOut(14,v);return;
+  case 0x99:if(vlat>=0&&!(v&0xC0))vdpAccess();ioOut(15,v);return; // setting a read address makes the VDP read ahead
+  case 0xA0:aySel=v&15;return;
+  case 0xA1:ayWrite(v);return;
+  case 0xA8:ppiA=v;return;
+  case 0xAA:ppiC=v;return;
+  case 0xAB:if(v&0x80){ppiA=0;ppiC=0}else{const m=1<<(v>>1&7);ppiC=v&1?ppiC|m:ppiC&~m}return}
+ hwFault("OUT to port 0x"+hx(p,2)+", which the ZL-80 board does not have")}
+function bootHW(code){
+ KER=KER||buildKernel();
+ phys.fill(0xFF,0,0x80000);phys.set(KER.rom,0);phys.set(code,0x4000); // flash: kernel in page 0, the program in pages 1 and 2
+ for(let i=0x80000;i<0x100000;i++)phys[i]=Math.random()*256|0;        // RAM and VRAM hold random values at power-on
+ for(let i=0;i<16384;i++)vram[i]=Math.random()*256|0;
+ VR.fill(0);vlat=-1;vad=0;vbuf=0;tmsStat=0;ayReset();pgReg.fill(0);pgOn=0;remap();ppiA=ppiC=0;
+ cpu.reset();cpu.cyc=0;hwF0=0;vLast=-1e9;bad=null;serialOut=""}
+function hwStep(){
+ cpu.irq=!!(VR[1]&0x20&&tmsStat&0x80);
+ if(cpu.halted)hwIdle+=4;
+ cpu.step();
+ if(cpu.sp<0xF100)hwFault("stack overflow (gosub without return, or goto out of a subroutine)");
+ else if(cpu.sp>0xFF00&&cpu.sp<0xFFFF)hwFault("return without gosub")}
+function frameHW(){
+ hwIdle=0;
+ while(cpu.cyc-hwF0<HWVBL&&!bad)hwStep();
+ draw(); // line 192: the VDP sets the frame flag (and fifth sprite / collision) and raises the interrupt
+ while(cpu.cyc-hwF0<HWFRAME&&!bad)hwStep();
+ hwF0+=HWFRAME;busy=Math.max(0,Math.round(100-hwIdle/HWFRAME*100))}
+
+const DIS={0x00:"NOP|do nothing",0x3E:"LD A,%n|A = number",0x3A:"LD A,(%w)|A = variable",0x32:"LD (%w),A|store A in variable",0x47:"LD B,A|B = A (second operand)",0x4F:"LD C,A|C = A (column index)",0x6F:"LD L,A|L = A (low address byte)",0x67:"LD H,A|H = A",0x7C:"LD A,H|A = H",0x26:"LD H,%n|H = page (high address byte)",0x21:"LD HL,%w|HL = address",0x23:"INC HL|next address",0x29:"ADD HL,HL|HL = HL * 2",0x77:"LD (HL),A|write A to memory",0x70:"LD (HL),B|write B to memory",0x7E:"LD A,(HL)|read memory into A",0x36:"LD (HL),%n|write number to memory",0x80:"ADD A,B|A = A + B",0x81:"ADD A,C|A = A + C",0x85:"ADD A,L|A = A + L",0x87:"ADD A,A|A = A * 2",0x90:"SUB B|A = A - B",0xA0:"AND B|A = A and B",0xA8:"XOR B|A = A xor B",0xB0:"OR B|A = A or B",0xB8:"CP B|compare A with B",0xE6:"AND %n|mask bits of A",0xF6:"OR %n|set bits in A",0xFE:"CP %n|compare A with number",0x3C:"INC A|A = A + 1",0x3D:"DEC A|A = A - 1",0xC3:"JP %w|jump",0xC2:"JP NZ,%w|jump if not equal",0xCA:"JP Z,%w|jump if equal",0xD2:"JP NC,%w|jump if no carry (A >= B)",0xDA:"JP C,%w|jump if carry (A < B)",0xCD:"CALL %w|call subroutine",0xC9:"RET|return from subroutine",0x10:"DJNZ %e|B = B - 1, loop until zero",0xDB:"IN A,(%n)|read port (0 keys, 1 random)",0xD3:"OUT (%n),A|write port (2 beep)",0x76:"HALT|wait for next frame",0xF3:"DI|interrupts off",0xFB:"EI|interrupts on"};
 function dis(c,a){const f=(DIS[c[a]]||"DB %n|unknown").split("|");let len=1;
- const t=f[0].replace("%n",()=>{len=2;return "$"+hx(c[a+1],2)}).replace("%w",()=>{len=3;return "$"+hx(c[a+1]|c[a+2]<<8,4)}).replace("%e",()=>{len=2;return "$"+hx((a+2+(c[a+1]<<24>>24))&65535,4)});
+ const t=f[0].replace("%n",()=>{len=2;return "$"+hx(c[a+1],2)}).replace("%w",()=>{len=3;return "$"+hx(c[a+1]|c[a+2]<<8,4)}).replace("%e",()=>{len=2;return "$"+hx((LORG+a+2+(c[a+1]<<24>>24))&65535,4)});
  return {t,d:f[1]||"",len}}
 function listing(c){
  const out=[LINFO,""],tail=c.length-4;
- const dump=(from,to)=>{for(let a=from;a<to;){const d=dis(c,a),b=[...c.slice(a,a+d.len)].map(x=>hx(x,2)).join(" ");out.push(hx(a,4)+"  "+b.padEnd(9)+" "+d.t.padEnd(18)+"; "+d.d);a+=d.len}};
+ const dump=(from,to)=>{for(let a=from;a<to;){const d=dis(c,a),b=[...c.slice(a,a+d.len)].map(x=>hx(x,2)).join(" ");out.push(hx(LORG+a,4)+"  "+b.padEnd(9)+" "+d.t.padEnd(18)+"; "+d.d);a+=d.len}};
  LMAP.forEach((m,i)=>{
   if(m.s===undefined){out.push("; "+m.c);return}
   out.push("","; ZL line "+m.n+": "+m.s+(m.c?"   ; "+m.c:""));
@@ -2066,11 +2243,11 @@ function drawTms2(){
  let o=0;for(let y=0;y<208;y++)for(let x=0;x<272;x++){const fx=x-8,fy=y-8;let q=bd;if(fx>=0&&fx<256&&fy>=0&&fy<192){const c=fb[fy*256+fx];if(c)q=TP[c]}d[o++]=q[0];d[o++]=q[1];d[o++]=q[2];d[o++]=255}
  tmsStat|=0x80;cx.putImageData(img,0,0)}
 /* AY-3-8910 / YM2149: 3 tone channels, noise, mixer, volume, envelope (16 shapes), port A. Ports: 18 register select, 19 data, 20/21 note helper. */
-const AYR=new Uint8Array(16),AYCLK=1773400,AYV=[0,0.0100,0.0145,0.0211,0.0307,0.0455,0.0645,0.1073,0.1266,0.2050,0.2922,0.3720,0.5065,0.6350,0.8057,1],AYMASK=[255,15,255,15,255,15,31,255,31,31,31,255,255,15,255,255];
+let AYCLK=1773400;const AYR=new Uint8Array(16),AYV=[0,0.0100,0.0145,0.0211,0.0307,0.0455,0.0645,0.1073,0.1266,0.2050,0.2922,0.3720,0.5065,0.6350,0.8057,1],AYMASK=[255,15,255,15,255,15,31,255,31,31,31,255,255,15,255,255];
 const ayS={tc:[0,0,0],to:[0,0,0],nc:0,lf:1,ec:0,ep:0,acc:0,l:0,r:0};let aySel=0,ayNode=null,ayNoteCh=0;
 function ayReset(){AYR.fill(0);ayS.lf=1;ayS.ep=0;ayS.ec=0;ayS.nc=0;ayS.acc=0;ayS.tc.fill(0);ayS.to.fill(0);aySel=0}
 function ayWrite(v){AYR[aySel]=v&AYMASK[aySel];if(aySel===13){ayS.ep=0;ayS.ec=0}}
-function ayRead(){return aySel===14?((AYR[7]&64)?AYR[14]:keys):aySel===15?255:AYR[aySel]}
+function ayRead(){return aySel===14?((AYR[7]&64)?AYR[14]:MOD.hw?joyPort():keys):aySel===15?255:AYR[aySel]}
 function ayNote(ch,n){const f=440*Math.pow(2,(n-69)/12),p=Math.max(1,Math.min(4095,Math.round(AYCLK/16/f)));AYR[(ch%3)*2]=p&255;AYR[(ch%3)*2+1]=p>>8}
 function ayEnv(){const sh=AYR[13],C=sh&8,A=(sh&4)?1:0,L=(sh&2)?1:0,H=sh&1,p=ayS.ep;
  if(p>=16&&(!C||H))return C?((A^L)?15:0):0;
@@ -2139,16 +2316,17 @@ function drawCrtc(){
  cx.putImageData(img,0,0)}
 const cv=$("cv"),cx=cv.getContext("2d");
 const PR=PAL.map(h=>[1,3,5].map(o=>parseInt(h.slice(o,o+2),16)));let img=null;
-function setMod(i){MOD=MODS[i];cv.width=MOD.w;cv.height=MOD.h;img=cx.createImageData(MOD.w,MOD.h);cv.style.aspectRatio=MOD.w+" / "+MOD.h;cv.style.width="min(100%,"+(MOD.w>=MOD.h?320:256)+"px)";$("cap").textContent=MOD.c}
-function draw(){if(MOD.crtc){drawCrtc();return}if(MOD.assist==="tms"){drawTms2();return}if(MOD.assist==="vdg"){drawVdg();return}const d=img.data,{w,h,sw,mono}=MOD;let o=0;for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=mem[0x8000+(y<<sw)+x]&15,c=mono?(v?MOD.on:MOD.off):PR[v];d[o++]=c[0];d[o++]=c[1];d[o++]=c[2];d[o++]=255}cx.putImageData(img,0,0)}
+function setMod(i){MOD=MODS[i];cv.width=MOD.w;cv.height=MOD.h;img=cx.createImageData(MOD.w,MOD.h);cv.style.aspectRatio=MOD.w+" / "+MOD.h;cv.style.width="min(100%,"+(MOD.w>=MOD.h?320:256)+"px)";$("cap").textContent=MOD.c;cpu=MOD.hw?hwCpu:fzCpu;AYCLK=MOD.hw?HWCLK/2:1773400}
+function draw(){if(MOD.crtc){drawCrtc();return}if(MOD.hw||MOD.assist==="tms"){drawTms2();return}if(MOD.assist==="vdg"){drawVdg();return}const d=img.data,{w,h,sw,mono}=MOD;let o=0;for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=mem[0x8000+(y<<sw)+x]&15,c=mono?(v?MOD.on:MOD.off):PR[v];d[o++]=c[0];d[o++]=c[1];d[o++]=c[2];d[o++]=255}cx.putImageData(img,0,0)}
 const hx=(v,w)=>v.toString(16).toUpperCase().padStart(w,"0");
 let timer=null;
 function frame(){
- cpu.halted=false;const c0=cpu.cyc;
- while(cpu.cyc-c0<BUDGET&&!cpu.halted)step();
- busy=Math.min(100,Math.round((cpu.cyc-c0)/BUDGET*100));
- draw();
- $("st").textContent=bad||`A=${hx(cpu.a,2)} B=${hx(cpu.b,2)} HL=${hx(cpu.h<<8|cpu.l,4)} PC=${hx(cpu.pc,4)}  Z=${cpu.f>>6&1} C=${cpu.f&1}  ${busy}% of 4 MHz  audio ${actx?actx.state:"off"}`;
+ if(MOD.hw)frameHW();
+ else{cpu.halted=false;const c0=cpu.cyc;
+  while(cpu.cyc-c0<BUDGET&&!cpu.halted)step();
+  busy=Math.min(100,Math.round((cpu.cyc-c0)/BUDGET*100));
+  draw()}
+ $("st").textContent=bad||`A=${hx(cpu.a,2)} B=${hx(cpu.b,2)} HL=${hx(cpu.h<<8|cpu.l,4)} PC=${hx(cpu.pc,4)}  Z=${cpu.f>>6&1} C=${cpu.f&1}  ${busy}% of ${MOD.hw?"3.58":"4"} MHz  audio ${actx?actx.state:"off"}`;
  $("st").className=bad?"err":"";
  if(bad)stop()}
 function stop(){clearInterval(timer);timer=null;ayReset()}
@@ -2157,7 +2335,7 @@ function run(){
  stop();
  try{
   const code=compile($("src").value);
-  boot(code);$("asm").textContent=listing(code);
+  if(MOD.hw)bootHW(code);else boot(code);$("asm").textContent=listing(code);
   $("hex").textContent=code.length+" bytes\n"+code.map(b=>hx(b,2)).join(" ");
   timer=setInterval(frame,1000/60);
  }catch(x){$("st").textContent=x.message;$("st").className="err"}}
@@ -2168,9 +2346,18 @@ sel.onchange=()=>{$("src").value=EX[sel.value];const w=EXMOD[sel.value],cur=MODS
 $("src").value=EX["AY-3-8910 music: Neon Rain"];sel.value="AY-3-8910 music: Neon Rain";
 
 const KM={ArrowLeft:1,ArrowRight:2,ArrowUp:4,ArrowDown:8," ":16};
-addEventListener("keydown",e=>{if(KM[e.key]&&document.activeElement!==$("src")){keys|=KM[e.key];e.preventDefault()}});
-addEventListener("keyup",e=>{if(KM[e.key])keys&=~KM[e.key]});
-addEventListener("blur",()=>{keys=0});
+// ZL-80 board keyboard: the MSX key matrix, rows 0-8 (bit 0 first); keys are matched by position, not by layout
+const MXK={ShiftRight:[6,0],ControlRight:[6,1]};
+[["Digit0","Digit1","Digit2","Digit3","Digit4","Digit5","Digit6","Digit7"],["Digit8","Digit9","Minus","Equal","Backslash","BracketLeft","BracketRight","Semicolon"],
+ ["Quote","Backquote","Comma","Period","Slash","IntlBackslash","KeyA","KeyB"],["KeyC","KeyD","KeyE","KeyF","KeyG","KeyH","KeyI","KeyJ"],
+ ["KeyK","KeyL","KeyM","KeyN","KeyO","KeyP","KeyQ","KeyR"],["KeyS","KeyT","KeyU","KeyV","KeyW","KeyX","KeyY","KeyZ"],
+ ["ShiftLeft","ControlLeft","AltLeft","CapsLock","AltRight","F1","F2","F3"],["F4","F5","Escape","Tab","End","Backspace","PageUp","Enter"],
+ ["Space","Home","Insert","Delete","ArrowLeft","ArrowUp","ArrowDown","ArrowRight"]].forEach((r,i)=>r.forEach((c,j)=>MXK[c]=[i,j]));
+addEventListener("keydown",e=>{if(document.activeElement===$("src"))return;
+ if(KM[e.key]){keys|=KM[e.key];e.preventDefault()}
+ const m=MXK[e.code];if(m){kbm[m[0]]|=1<<m[1];if(MOD.hw)e.preventDefault()}});
+addEventListener("keyup",e=>{if(KM[e.key])keys&=~KM[e.key];const m=MXK[e.code];if(m)kbm[m[0]]&=~(1<<m[1])});
+addEventListener("blur",()=>{keys=0;kbm.fill(0)});
 document.querySelectorAll("#pad button").forEach(b=>{
  const m=+b.dataset.b;
  b.onpointerdown=e=>{e.preventDefault();keys|=m};
