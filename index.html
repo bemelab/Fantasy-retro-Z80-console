@@ -44,6 +44,7 @@ table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical
  <button class="go" id="run">Run</button><button id="stop">Stop</button><button id="snd">Sound</button>
  <select id="ex" aria-label="Example program"></select>
  <select id="dsp" aria-label="Display module"></select>
+ <select id="aych" aria-label="Sound chip"><option value="8910">AY-3-8910 (40 pins, ports A and B)</option><option value="8912">AY-3-8912 (28 pins, port A only)</option></select>
 </div>
 <div class="row" id="hwrow" hidden>
  <button id="rom" title="512 KB flash image for an EEPROM programmer: kernel in page 0, this program in pages 1-2">ROM .bin</button><button id="hexb" title="This program as Intel HEX at 4000h, for the serial loader">HEX</button><button id="usb" title="Send this program to a ZL-80 board on a USB serial port (Web Serial, Chrome or Edge)">Send to board</button><button id="emus" title="Send this program to the emulated board through its serial port, the same way">Send to emulator</button>
@@ -2154,7 +2155,10 @@ function vdpAccess(){ // the TMS9918A needs 8 us between VRAM accesses during th
  const pos=cpu.cyc-hwF0,need=(VR[1]&0x40)&&pos<HWVBL?29:8,gap=cpu.cyc-vLast;
  if(gap<need)hwFault("VRAM accesses only "+gap+" T-states apart; the TMS9928A needs "+need+(need>8?" during the active display":""));
  vLast=cpu.cyc}
-const joyPort=()=>AYR[15]&0x40?0xFF:~((keys&4?1:0)|(keys&8?2:0)|(keys&1?4:0)|(keys&2?8:0)|(keys&16?16:0))&255;
+// joystick 1 or 2 on AY port A. AY-3-8910 board: port B bit 6 selects (a pull-up picks joystick 2 while port B is an input);
+// AY-3-8912 board (no port B): 8255 PC4 drives a 74HC157 instead. 0 = joystick 1 on both, so one kernel fits both boards.
+const joy2=()=>AYTYPE===8912?ppiC&0x10:AYR[7]&0x80?AYR[15]&0x40:1;
+const joyPort=()=>joy2()?0xFF:~((keys&4?1:0)|(keys&8?2:0)|(keys&1?4:0)|(keys&2?8:0)|(keys&16?16:0))&255;
 function hwIn(p){
  switch(p){
   case 0x80:return acia.rdrf|(cpu.cyc>=acia.txT?2:0)|(acia.ovr?0x20:0); // 68B50 status: RDRF, TDRE, overrun
@@ -2274,12 +2278,14 @@ function drawTms2(){
       if((vram[sp+nm*8+ly+(sx>=8?16:0)]>>(7-(sx&7)))&1){if(occ[x])tmsStat|=0x20;occ[x]=1;if((cl&15)&&!pa[x]){pa[x]=1;fb[line*256+x]=cl&15}}}}}}}
  let o=0;for(let y=0;y<208;y++)for(let x=0;x<272;x++){const fx=x-8,fy=y-8;let q=bd;if(fx>=0&&fx<256&&fy>=0&&fy<192){const c=fb[fy*256+fx];if(c)q=TP[c]}d[o++]=q[0];d[o++]=q[1];d[o++]=q[2];d[o++]=255}
  tmsStat|=0x80;cx.putImageData(img,0,0)}
-/* AY-3-8910 / YM2149: 3 tone channels, noise, mixer, volume, envelope (16 shapes), port A. Ports: 18 register select, 19 data, 20/21 note helper. */
+/* AY-3-8910 / AY-3-8912 / YM2149: 3 tone channels, noise, mixer, volume, envelope (16 shapes), I/O port A, and port B on the 40-pin AY-3-8910 only.
+   Fantasy ports: 18 register select, 19 data, 20/21 note helper. */
 let AYCLK=1773400;const AYR=new Uint8Array(16),AYV=[0,0.0100,0.0145,0.0211,0.0307,0.0455,0.0645,0.1073,0.1266,0.2050,0.2922,0.3720,0.5065,0.6350,0.8057,1],AYMASK=[255,15,255,15,255,15,31,255,31,31,31,255,255,15,255,255];
 const ayS={tc:[0,0,0],to:[0,0,0],nc:0,lf:1,ec:0,ep:0,acc:0,l:0,r:0};let aySel=0,ayNode=null,ayNoteCh=0;
 function ayReset(){AYR.fill(0);ayS.lf=1;ayS.ep=0;ayS.ec=0;ayS.nc=0;ayS.acc=0;ayS.tc.fill(0);ayS.to.fill(0);aySel=0}
 function ayWrite(v){AYR[aySel]=v&AYMASK[aySel];if(aySel===13){ayS.ep=0;ayS.ec=0}}
-function ayRead(){return aySel===14?((AYR[7]&64)?AYR[14]:MOD.hw?joyPort():keys):aySel===15?255:AYR[aySel]}
+let AYTYPE=8910; // 8910: 40 pins, ports A and B. 8912: 28 pins, port A only; R15 is still a register, with no pins behind it
+function ayRead(){return aySel===14?((AYR[7]&64)?AYR[14]:MOD.hw?joyPort():keys):aySel===15?(AYTYPE===8912||AYR[7]&0x80?AYR[15]:0xFF):AYR[aySel]}
 function ayNote(ch,n){const f=440*Math.pow(2,(n-69)/12),p=Math.max(1,Math.min(4095,Math.round(AYCLK/16/f)));AYR[(ch%3)*2]=p&255;AYR[(ch%3)*2+1]=p>>8}
 function ayEnv(){const sh=AYR[13],C=sh&8,A=(sh&4)?1:0,L=(sh&2)?1:0,H=sh&1,p=ayS.ep;
  if(p>=16&&(!C||H))return C?((A^L)?15:0):0;
@@ -2433,6 +2439,7 @@ document.querySelectorAll("#pad button").forEach(b=>{
 });
 const dsp=$("dsp");MODS.forEach((m,i)=>dsp.add(new Option(m.n,i)));
 dsp.onchange=()=>{setMod(+dsp.value);run()};
+$("aych").onchange=()=>{AYTYPE=+$("aych").value;run()};
 setMod(0);
 $("snd").onclick=()=>{audioInit();beep(40)};
 run();

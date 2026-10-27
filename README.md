@@ -21,7 +21,7 @@ Press **Run** once so the browser allows sound.
   - MC6845 CRTC text 80x25 and graphics
   - TMS9918A VDP 256x192: Graphics I and II, Text, Multicolor, 32 sprites, status flags
   - MC6847 VDG: text, semigraphics and 8 graphics modes
-- **Sound:** AY-3-8910 with 3 tone channels, noise, mixer, envelope (16 shapes), and port A. There is also a simple `beep`.
+- **Sound:** AY-3-8910 or AY-3-8912 (pick one in the list) with 3 tone channels, noise, mixer, envelope (16 shapes), I/O port A, and port B on the AY-3-8910. There is also a simple `beep`.
 
 ## Examples
 
