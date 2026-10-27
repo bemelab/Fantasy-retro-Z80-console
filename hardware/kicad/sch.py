@@ -58,9 +58,9 @@ class Part:
                 self.pins[p[0]] = (x, self.top - i * GRID, side, p)
         self.bottom = self.top - (rows - 1) * GRID
 
-    def lib(self):
+    def lib(self, prefix="zl80:"):
         w2 = self.width / 2
-        out = [f"(symbol {q('zl80:' + self.name)}" + (" (power)" if self.power else "")
+        out = [f"(symbol {q(prefix + self.name)}" + (" (power)" if self.power else "")
                + " (pin_names (offset 1.016)) (in_bom yes) (on_board yes)"]
         out.append(f"  (property \"Reference\" {q(self.ref)} (at 0 {n(self.top + 3.81)} 0) {FONT})")
         out.append(f"  (property \"Value\" {q(self.name)} (at 0 {n(self.bottom - 3.81)} 0) {FONT})")
@@ -151,3 +151,14 @@ class Sheet:
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
         return text
+
+    def write_library(self, folder, name="zl80"):
+        """Write the symbols as a project library and the sym-lib-table that points KiCad at it."""
+        with open(f"{folder}/{name}.kicad_sym", "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("(kicad_symbol_lib (version 20220914) (generator gen_schematic)\n")
+            for part in self.parts.values():
+                fh.write(part.lib(prefix="") + "\n")
+            fh.write(")\n")
+        with open(f"{folder}/sym-lib-table", "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(f'(sym_lib_table\n  (version 7)\n  (lib (name "{name}")(type "KiCad")(uri "${{KIPRJMOD}}/{name}.kicad_sym")'
+                     f'(options "")(descr "ZL-80 board symbols, written by gen_schematic.py"))\n)\n')

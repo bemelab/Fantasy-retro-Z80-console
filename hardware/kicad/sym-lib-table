@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "zl80")(type "KiCad")(uri "${KIPRJMOD}/zl80.kicad_sym")(options "")(descr "ZL-80 board symbols, written by gen_schematic.py"))
+)
