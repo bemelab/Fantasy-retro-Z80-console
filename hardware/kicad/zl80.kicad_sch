@@ -1,8 +1,8 @@
 (kicad_sch (version 20230121) (generator eeschema)
   (uuid "39975c11-23ed-514a-9f29-f1c34a4c379e")
   (paper "A4")
-  (title_block (title "ZL-80 board") (date "2026-10-27") (rev "0.2")
-    (comment 1 "Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, UM245R USB FIFO")
+  (title_block (title "ZL-80 board") (date "2026-10-27") (rev "0.3")
+    (comment 1 "Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, FT245RL USB-C")
     (comment 2 "Design only: not built or tested")
   )
   (lib_symbols

@@ -47,7 +47,7 @@ table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical
  <select id="aych" aria-label="Sound chip"><option value="8910">AY-3-8910 (40 pins, ports A and B)</option><option value="8912">AY-3-8912 (28 pins, port A only)</option></select>
 </div>
 <div class="row" id="hwrow" hidden>
- <button id="rom" title="512 KB flash image for an EEPROM programmer: kernel in page 0, this program in pages 1-2">ROM .bin</button><button id="hexb" title="This program as Intel HEX at 4000h, for the serial loader">HEX</button><button id="usb" title="Send this program to a ZL-80 board over USB: its UM245R shows up as a serial port (Web Serial, Chrome or Edge)">Send to board</button><button id="emus" title="Send this program to the emulated board through its USB FIFO, the same way">Send to emulator</button>
+ <button id="rom" title="512 KB flash image for an EEPROM programmer: kernel in page 0, this program in pages 1-2">ROM .bin</button><button id="hexb" title="This program as Intel HEX at 4000h, for the serial loader">HEX</button><button id="usb" title="Send this program to a ZL-80 board over USB: its FT245RL shows up as a serial port (Web Serial, Chrome or Edge)">Send to board</button><button id="emus" title="Send this program to the emulated board through its USB FIFO, the same way">Send to emulator</button>
  <pre id="ser" style="flex-basis:100%;margin:0"></pre>
 </div>
 <textarea id="src" spellcheck="false" aria-label="ZL source code"></textarea>
@@ -2032,7 +2032,7 @@ function step(){
  cpu.step()}
 
 /* ZL-80 board (docs/hardware.md). Z80 at 3.58 MHz; 512 KB flash (pages 0-31) and 512 KB RAM (pages 32-63) behind four 16 KB
-   page registers; TMS9918A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; UM245R USB FIFO on 0x80 (data) and 0x81 (status).
+   page registers; TMS9918A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; FT245RL USB FIFO on 0x80 (data) and 0x81 (status).
    Kernel RAM: 0xFF00 ARGX, 0xFF01 ARGY, 0xFF02 last VDP status, 0xFF03 random seed, 0xFF05/0xFF06 loader record type and error,
    0xFF10-0xFF17 copies of VDP registers R0-R7. */
 const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_TYPE=0xFF05,K_ERR=0xFF06,K_VRS=0xFF10;
@@ -2145,7 +2145,7 @@ function buildKernel(){
  return {rom:k,s}}
 const phys=new Uint8Array(0x100000),pgReg=new Uint8Array(4),bankOff=new Int32Array(4),kbm=new Uint8Array(11);
 let pgOn=0,ppiA=0,ppiC=0,hwF0=0,vLast=-1e9,hwIdle=0;
-// UM245R (FT245R) USB FIFO: 256 bytes received from the PC wait in its FIFO; when it is full the PC waits, so nothing is lost.
+// FT245RL USB FIFO: 256 bytes received from the PC wait in its FIFO; when it is full the PC waits, so nothing is lost.
 // Bytes the Z80 sends are taken by the PC's driver at once, so TXE# stays low. host = bytes the PC has not handed over yet.
 const usbq={host:[],rx:[],out:[]};
 function usbTick(){while(usbq.host.length&&usbq.rx.length<256)usbq.rx.push(usbq.host.shift())}

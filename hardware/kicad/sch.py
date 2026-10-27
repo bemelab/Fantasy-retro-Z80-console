@@ -91,7 +91,7 @@ class Sheet:
     def __init__(self, title, path, project="zl80"):
         self.title, self.path, self.project = title, path, project
         self.paper = "A3"
-        self.parts, self.items, self.refs, self.labels = {}, [], set(), []
+        self.parts, self.items, self.refs, self.labels, self.placed = {}, [], set(), [], []
         self.nets = {}  # net -> list of "REF.pin"
         self.extent = [0, 0]
 
@@ -110,6 +110,7 @@ class Sheet:
         self.parts[part.name] = part
         x, y = round(x / GRID) * GRID, round(y / GRID) * GRID
         fp = part.footprint if footprint is None else footprint
+        self.placed.append((ref, part, value, conn, fp))  # for the PCB and the footprint check
         s = [f"(symbol (lib_id {q('zl80:' + part.name)}) (at {n(x)} {n(y)} 0) (unit 1) (in_bom yes) (on_board yes) (dnp no)",
              f"  (uuid {q(uid('sym', ref))})",
              f"  (property \"Reference\" {q(ref)} (at {n(x)} {n(y - part.top - 3.81)} 0) {FONT_HIDE if part.power else FONT})",
