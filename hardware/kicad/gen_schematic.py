@@ -2,7 +2,8 @@
 
     python gen_schematic.py
 
-writes zl80.kicad_sch and zl80-netlist.txt next to this file. Connections are
+writes the KiCad project files (a root sheet and one sheet per page) and
+zl80-netlist.txt next to this file. Connections are
 made by net labels; zl80-netlist.txt lists every net with the pins on it, for
 checking against the datasheets.
 """
@@ -11,7 +12,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from sch import Part, Sheet  # noqa: E402
+from sch import Part, Project  # noqa: E402
 P, I, O, B, PI, PO, OC = "passive", "input", "output", "bidirectional", "power_in", "power_out", "open_collector"
 DIP = lambda n, w=7.62: f"Package_DIP:DIP-{n}_W{w:.2f}mm"
 DIP6 = lambda n: DIP(n, 15.24)
@@ -187,37 +188,51 @@ def bus(prefix, a, b):
     return [f"{prefix}{i}" for i in range(a, b + 1)]
 
 
+class Layout:
+    """Places parts on one page: ICs in columns, then two-pin parts in a grid below them."""
+
+    def __init__(self, sheet, n_cols=4):
+        self.s = sheet
+        self.cols = [40 + i * 116 for i in range(n_cols)]
+        self.cy = [35.0] * n_cols
+        self.i = 0
+        self.decouple = []
+
+    def put(self, col, part, ref, value, conn, gap=17.78):
+        y = self.cy[col] + part.top + 5.08
+        self.s.place(part, ref, value, self.cols[col], y, conn)
+        self.cy[col] = y - part.bottom + gap
+        if ref.startswith("U") and any(p[3][1] in ("VCC", "VDD") for p in part.pins.values()):
+            self.decouple.append(ref)
+
+    def two(self, part, ref, value, a, b):
+        if self.i == 0:
+            self.y0 = max(self.cy) + 2.54
+        n_grid = 6 if len(self.cols) <= 3 else 8
+        x = self.cols[0] - 10 + (self.i % n_grid) * 50.8
+        y = self.y0 + (self.i // n_grid) * 12.7
+        self.i += 1
+        self.s.place(part, ref, value, x, y, {"1": a, "2": b})
+
+
 def build():
-    s = Sheet("ZL-80 board", "A1")
-    cols = [40 + i * 116 for i in range(7)]
-    cy = [45.0] * 7
-
-    def put(col, part, ref, value, conn, gap=17.78, **kw):
-        y = cy[col] + part.top + 5.08
-        s.place(part, ref, value, cols[col], y, conn, **kw)
-        cy[col] = y - part.bottom + gap
-
-    grid = {}
-
-    def grid_init(x, y, n_cols, dx=58.42, dy=12.7):
-        grid.update(x0=x, y0=y, n=n_cols, dx=dx, dy=dy, i=0)
-
-    def two(part, ref, value, a, b):
-        i = grid["i"]
-        grid["i"] += 1
-        s.place(part, ref, value, grid["x0"] + (i % grid["n"]) * grid["dx"], grid["y0"] + (i // grid["n"]) * grid["dy"],
-                {"1": a, "2": b})
-
+    proj = Project("ZL-80 board")
     V, G = "+5V", "GND"
     A, D = bus("A", 0, 15), bus("D", 0, 7)
+    caps = iter([c for c in range(6, 36) if c not in (29, 30, 31)])  # 100 nF supply decoupling, one per chip
 
-    # --- column 0: CPU and memory -----------------------------------------------------------------------------
+    def decouple(pg):
+        for ref in pg.decouple:
+            pg.two(CAP, f"C{next(caps)}", f"100n ({ref})", V, G)
+
+    # --- page 2: CPU, memory and decoding ------------------------------------------------------------------------
+    pg = Layout(proj.page("CPU, memory and decoding", "cpu_memory.kicad_sch"), 4)
     z = {str(p): nm for p, nm in zip([30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 1, 2, 3, 4, 5], A)}
     z.update({str(p): nm for p, nm in zip([14, 15, 12, 8, 7, 9, 10, 13], D)})
     z.update({"6": "ZCLK", "26": "~{RESET}", "16": "~{INT}", "17": "~{NMI}", "24": "~{WAIT}", "25": "~{BUSRQ}",
               "11": V, "29": G, "27": "~{M1}", "19": "~{MREQ}", "20": "~{IORQ}", "21": "~{RD}", "22": "~{WR}",
               "28": None, "18": None, "23": None})
-    put(0, Z80, "U1", "Z84C0004 (Z80 CMOS)", z)
+    pg.put(0, Z80, "U1", "Z84C0004 (Z80 CMOS)", z)
 
     def mem(part, ref, value, ce, we):
         c = {}
@@ -230,190 +245,202 @@ def build():
                 c[num] = "D" + nm[2:]
             else:
                 c[num] = {"VCC": V, "VSS": G, "~{CE}": ce, "~{OE}": "~{RD}", "~{WE}": we}[nm]
-        put(0, part, ref, value, c)
+        pg.put(1, part, ref, value, c)
 
     mem(FLASH, "U2", "SST39SF040 flash, pages 0-31", "~{ROMCS}", "~{FLWE}")
     mem(SRAM, "U3", "AS6C4008 SRAM, pages 32-63", "~{RAMCS}", "~{WR}")
+    pg.put(2, PAGE, "U4", "74HCT670 page bits 0-3",
+           {"15": "D0", "1": "D1", "2": "D2", "3": "D3", "14": "A0", "13": "A1", "12": "~{PGWR}", "5": "A14", "4": "A15",
+            "11": "~{PGEN}", "16": V, "8": G, "10": "PA14", "9": "PA15", "7": "PA16", "6": "PA17"})
+    pg.put(2, PAGE, "U5", "74HCT670 page bits 4-5",
+           {"15": "D4", "1": "D5", "2": G, "3": G, "14": "A0", "13": "A1", "12": "~{PGWR}", "5": "A14", "4": "A15",
+            "11": "~{PGEN}", "16": V, "8": G, "10": "PA18", "9": "PA19", "7": None, "6": None})
+    pg.put(2, HC74, "U11", "74HCT74 paging on / AY clock",
+           {"2": "D0", "3": "~{ENWR}", "4": V, "1": "~{RESET}", "5": None, "6": "~{PGEN}",
+            "12": "~{AYCLK}", "11": "CPUCLK", "10": V, "13": V, "9": "AYCLK", "8": "~{AYCLK}", "14": V, "7": G})
+    pg.put(3, HC138, "U6", "74HCT138 I/O 80h-BFh",
+           {"1": "A3", "2": "A4", "3": "A5", "6": "A7", "4": "A6", "5": "~{IOSEL}", "16": V, "8": G,
+            "15": "~{USB_CS}", "14": None, "13": None, "12": "~{VDP_CS}", "11": "~{AY_CS}", "10": "~{PPI_CS}", "9": None, "7": None})
+    pg.put(3, HC138, "U7", "74HCT138 I/O 00h-7Fh",
+           {"1": "A3", "2": "A4", "3": "A5", "6": "A6", "4": "A7", "5": "~{IOSEL}", "16": V, "8": G,
+            "15": None, "14": None, "13": None, "12": None, "11": None, "10": None, "9": None, "7": "~{MAP_CS}"})
+    pg.put(3, HC32, "U8", "74HCT32",
+           {"1": "~{IORQ}", "2": "M1", "3": "~{IOSEL}", "4": "~{MREQ}", "5": "PA19", "6": "~{ROMCS}",
+            "9": "~{MREQ}", "10": "~{PA19}", "8": "~{RAMCS}", "12": "~{MAP_CS}", "13": "~{WR}", "11": "~{MAPWR}", "14": V, "7": G})
+    pg.put(0, HC32, "U9", "74HCT32",
+           {"1": "~{MAPWR}", "2": "A2", "3": "~{PGWR}", "4": "~{MAPWR}", "5": "~{A2}", "6": "~{ENWR}",
+            "9": "~{VDP_CS}", "10": "~{WR}", "8": "~{CSW}", "12": "~{VDP_CS}", "13": "~{RD}", "11": "~{CSR}", "14": V, "7": G})
+    pg.put(0, HC04, "U10", "74HCT04",
+           {"1": "~{M1}", "2": "M1", "3": "PA19", "4": "~{PA19}", "5": "A2", "6": "~{A2}", "9": "~{RESET}", "8": "RESET",
+            "11": "CPUCLK", "10": "ZCLK", "13": "A0", "12": "~{A0}", "14": V, "7": G})
+    pg.put(1, JMP, "JP1", "Flash write enable", {"1": "~{WR}", "2": "~{FLWE}"})
+    for i, net in enumerate(["PA14", "PA15", "PA16", "PA17", "PA18", "PA19"]):
+        pg.two(RES, f"R{1 + i}", "10k", net, G)  # paging off: the page lines read 0
+    for i, net in enumerate(["~{NMI}", "~{WAIT}", "~{BUSRQ}", "~{INT}", "~{FLWE}"]):
+        pg.two(RES, f"R{7 + i}", "10k", V, net)
+    decouple(pg)
+    cpu = pg
 
-    # --- column 1: page mapper and decoding --------------------------------------------------------------------
-    put(1, PAGE, "U4", "74HCT670 page bits 0-3",
-        {"15": "D0", "1": "D1", "2": "D2", "3": "D3", "14": "A0", "13": "A1", "12": "~{PGWR}", "5": "A14", "4": "A15",
-         "11": "~{PGEN}", "16": V, "8": G, "10": "PA14", "9": "PA15", "7": "PA16", "6": "PA17"})
-    put(1, PAGE, "U5", "74HCT670 page bits 4-5",
-        {"15": "D4", "1": "D5", "2": G, "3": G, "14": "A0", "13": "A1", "12": "~{PGWR}", "5": "A14", "4": "A15",
-         "11": "~{PGEN}", "16": V, "8": G, "10": "PA18", "9": "PA19", "7": None, "6": None})
-    put(1, HC138, "U6", "74HCT138 I/O 80h-BFh",
-        {"1": "A3", "2": "A4", "3": "A5", "6": "A7", "4": "A6", "5": "~{IOSEL}", "16": V, "8": G,
-         "15": "~{USB_CS}", "14": None, "13": None, "12": "~{VDP_CS}", "11": "~{AY_CS}", "10": "~{PPI_CS}", "9": None, "7": None})
-    put(1, HC138, "U7", "74HCT138 I/O 00h-7Fh",
-        {"1": "A3", "2": "A4", "3": "A5", "6": "A6", "4": "A7", "5": "~{IOSEL}", "16": V, "8": G,
-         "15": None, "14": None, "13": None, "12": None, "11": None, "10": None, "9": None, "7": "~{MAP_CS}"})
-    put(1, HC32, "U8", "74HCT32",
-        {"1": "~{IORQ}", "2": "M1", "3": "~{IOSEL}", "4": "~{MREQ}", "5": "PA19", "6": "~{ROMCS}",
-         "9": "~{MREQ}", "10": "~{PA19}", "8": "~{RAMCS}", "12": "~{MAP_CS}", "13": "~{WR}", "11": "~{MAPWR}", "14": V, "7": G})
-    put(1, HC32, "U9", "74HCT32",
-        {"1": "~{MAPWR}", "2": "A2", "3": "~{PGWR}", "4": "~{MAPWR}", "5": "~{A2}", "6": "~{ENWR}",
-         "9": "~{VDP_CS}", "10": "~{WR}", "8": "~{CSW}", "12": "~{VDP_CS}", "13": "~{RD}", "11": "~{CSR}", "14": V, "7": G})
-
-    # --- column 2: inverters, flip-flops, AY bus control, power -------------------------------------------------
-    put(2, HC04, "U10", "74HCT04",
-        {"1": "~{M1}", "2": "M1", "3": "PA19", "4": "~{PA19}", "5": "A2", "6": "~{A2}", "9": "~{RESET}", "8": "RESET",
-         "11": "CPUCLK", "10": "ZCLK", "13": "A0", "12": "~{A0}", "14": V, "7": G})
-    put(2, HC74, "U11", "74HCT74 paging on / AY clock",
-        {"2": "D0", "3": "~{ENWR}", "4": V, "1": "~{RESET}", "5": None, "6": "~{PGEN}",
-         "12": "~{AYCLK}", "11": "CPUCLK", "10": V, "13": V, "9": "AYCLK", "8": "~{AYCLK}", "14": V, "7": G})
-    put(2, HC02, "U12", "74HCT02 AY bus control",
-        {"2": "~{AY_CS}", "3": "~{WR}", "1": "BDIR", "5": "~{AY_CS}", "6": "A0", "4": "BC1",
-         "8": "~{USBWRQ}", "9": "A0", "10": "USBWR", "11": G, "12": G, "13": None, "14": V, "7": G})
-    put(2, DS1813, "U13", "DS1813-5 reset", {"2": V, "3": G, "1": "~{RESET}"})
-    # USB FIFO strobes: 80h read = RD# (active low), 80h write = WR (active high, latches on its falling edge), 81h read = status
-    put(2, HC32, "U27", "74HCT32 USB FIFO strobes",
-        {"1": "~{USB_CS}", "2": "~{RD}", "3": "~{USBRDQ}", "4": "~{USBRDQ}", "5": "A0", "6": "~{USBRD}",
-         "9": "~{USBRDQ}", "10": "~{A0}", "8": "~{USBST}", "12": "~{USB_CS}", "13": "~{WR}", "11": "~{USBWRQ}", "14": V, "7": G})
-    put(2, REG, "U14", "R-78E5.0-1.0 (or 7805)", {"1": "+12V", "2": G, "3": V})
-    put(2, PWR_FLAG, "#FLG1", "PWR_FLAG", {"1": G}, gap=7.62)
-    put(2, PWR_FLAG, "#FLG2", "PWR_FLAG", {"1": "+12V"}, gap=7.62)
-    put(2, DCJACK, "J1", "12 V DC in", {"1": "+12V_IN", "2": G, "3": G})
-
-    # --- column 3: video ---------------------------------------------------------------------------------------
+    # --- page 3: video -----------------------------------------------------------------------------------------------
+    pg = Layout(proj.page("Video: TMS9918A and VRAM", "video.kicad_sch"), 4)
     t = {"24": "D7", "23": "D6", "22": "D5", "21": "D4", "20": "D3", "19": "D2", "18": "D1", "17": "D0",  # CD0 is the MSB
          "13": "A0", "14": "~{CSW}", "15": "~{CSR}", "16": "VDP_INT", "34": "~{RESET}", "39": "VXT1", "40": "VXT2",
          "38": "CPUCLK", "37": None, "33": V, "12": G, "1": "~{VRAS}", "2": "~{VCAS}", "11": "VR~{W}", "36": "COMVID",
          "35": "EXTVDP"}
     t.update({str(p): f"VAD{i}" for i, p in enumerate([10, 9, 8, 7, 6, 5, 4, 3])})
     t.update({str(p): f"VRD{i}" for i, p in enumerate([32, 31, 30, 29, 28, 27, 26, 25])})
-    put(3, TMS, "U15", "TMS9918A", t)
+    pg.put(0, TMS, "U15", "TMS9918A", t)
+    pg.put(0, XTAL, "Y1", "10.738635 MHz", {"1": "VXT1", "2": "VXT2"})
     # 16 KB VRAM: 62256 SRAM behind row, column and write-data latches (jblang/TMS9918A, after Tom LeMense).
     # The VDP puts the row address on AD1-AD7 at /RAS and the column address at /CAS; AD0 carries data only.
     vad = {str(p): f"VAD{i}" for i, p in enumerate([2, 3, 4, 5, 6, 7, 8, 9])}
-    put(3, HC574, "U17", "74HCT574 VRAM row latch",
-        dict(vad, **{"11": "VROW", "1": G, "20": V, "10": G, "19": None, "18": "VMA0", "17": "VMA1", "16": "VMA2", "15": "VMA3",
-                     "14": "VMA10", "13": "VMA4", "12": "VMA5"}))
-    put(3, HC574, "U24", "74HCT574 VRAM column latch",
-        dict(vad, **{"11": "VCOL", "1": G, "20": V, "10": G, "19": None, "18": "VMA11", "17": "VMA6", "16": "VMA7", "15": "VMA9",
-                     "14": "VMA12", "13": "VMA8", "12": "VMA13"}))
-    put(3, HC574, "U25", "74HCT574 VRAM write data",
-        dict(vad, **{"11": "~{VRW}", "1": "VR~{W}", "20": V, "10": G, "19": "VRD0", "18": "VRD1", "17": "VRD2", "16": "VRD3",
-                     "15": "VRD4", "14": "VRD5", "13": "VRD6", "12": "VRD7"}))
+    pg.put(1, HC574, "U17", "74HCT574 VRAM row latch",
+           dict(vad, **{"11": "VROW", "1": G, "20": V, "10": G, "19": None, "18": "VMA0", "17": "VMA1", "16": "VMA2", "15": "VMA3",
+                        "14": "VMA10", "13": "VMA4", "12": "VMA5"}))
+    pg.put(1, HC574, "U24", "74HCT574 VRAM column latch",
+           dict(vad, **{"11": "VCOL", "1": G, "20": V, "10": G, "19": None, "18": "VMA11", "17": "VMA6", "16": "VMA7", "15": "VMA9",
+                        "14": "VMA12", "13": "VMA8", "12": "VMA13"}))
+    pg.put(2, HC574, "U25", "74HCT574 VRAM write data",
+           dict(vad, **{"11": "~{VRW}", "1": "VR~{W}", "20": V, "10": G, "19": "VRD0", "18": "VRD1", "17": "VRD2", "16": "VRD3",
+                        "15": "VRD4", "14": "VRD5", "13": "VRD6", "12": "VRD7"}))
+    pg.put(2, HC04, "U26", "74HCT04 VRAM strobes",
+           {"1": "~{VRAS}", "2": "VROW", "3": "~{VCAS}", "4": "VCAS1", "5": "VCAS1", "6": "VCAS2", "9": "VCAS2", "8": "VCOL",
+            "11": "VR~{W}", "10": "~{VRW}", "13": G, "12": None, "14": V, "7": G})  # VCOL: /CAS inverted and delayed by three gates
     m = {"10": "VMA0", "9": "VMA1", "8": "VMA2", "7": "VMA3", "6": "VMA4", "5": "VMA5", "4": "VMA6", "3": "VMA7", "25": "VMA8",
          "24": "VMA9", "21": "VMA10", "23": "VMA11", "2": "VMA12", "26": "VMA13", "1": "VMA13", "28": V, "14": G,
          "20": "~{VCAS}", "22": "~{VRW}", "27": "VR~{W}"}
     m.update({str(p): f"VRD{i}" for i, p in enumerate([11, 12, 13, 15, 16, 17, 18, 19])})  # VRDn = RDn = data bit n of ADn
-    put(3, SRAM32K, "U16", "62256 VRAM (16 KB used)", m)
-    put(3, HC04, "U26", "74HCT04 VRAM strobes",
-        {"1": "~{VRAS}", "2": "VROW", "3": "~{VCAS}", "4": "VCAS1", "5": "VCAS1", "6": "VCAS2", "9": "VCAS2", "8": "VCOL",
-         "11": "VR~{W}", "10": "~{VRW}", "13": G, "12": None, "14": V, "7": G})  # VCOL: /CAS inverted and delayed by three gates
-    put(6, NPN, "Q1", "2N4401 video buffer", {"2": "VID_B", "1": "VID_C", "3": "VID_OUT"})
-    put(6, SCART, "J2", "SCART",
-        {"1": None, "2": "AUD_R", "3": None, "4": G, "5": G, "6": "AUD_L", "7": "RGB_B", "8": "SCART_FS", "9": G, "10": None,
-         "11": "RGB_G", "12": None, "13": G, "14": G, "15": "RGB_R", "16": "BLANK", "17": G, "18": G, "19": None,
-         "20": "VID_OUT", "21": G})
-    put(6, RGBHDR, "J3", "RGB board (later)", {"1": "RGB_R", "2": "RGB_G", "3": "RGB_B", "4": "BLANK", "5": G, "6": V,
-                                                "7": "EXTVDP"})
+    pg.put(3, SRAM32K, "U16", "62256 VRAM (16 KB used)", m)
+    pg.put(3, NPN, "Q1", "2N4401 video buffer", {"2": "VID_B", "1": "VID_C", "3": "VID_OUT"})
+    pg.two(CAP, "C30", "22p", "VXT1", G)  # TI: 15-39 pF typical; jblang uses 16 pF
+    pg.two(CAP, "C31", "22p", "VXT2", G)
+    pg.two(DIODE, "D3", "BAT85", "VDP_INT", "~{INT}")
+    pg.two(RES, "R25", "130", "COMVID", "VID_B")
+    pg.two(RES, "R26", "470", "VID_B", G)
+    pg.two(RES, "R27", "75", "VID_OUT", G)
+    pg.two(FBEAD, "FB1", "Ferrite bead", V, "VID_C")
+    pg.two(CAP, "C29", "100n", "VID_C", G)
+    decouple(pg)
 
-    # --- column 4: sound and joysticks --------------------------------------------------------------------------
+    # --- page 4: sound and joysticks --------------------------------------------------------------------------------
+    pg = Layout(proj.page("Sound and joysticks", "sound.kicad_sch"), 4)
     a = {str(p): d for p, d in zip([37, 36, 35, 34, 33, 32, 31, 30], D)}
     a.update({"27": "BDIR", "29": "BC1", "28": V, "25": V, "24": G, "23": "~{RESET}", "22": "AYCLK", "39": None, "26": None,
               "40": V, "1": G, "4": "AY_A", "3": "AY_B", "38": "AY_C",
               "21": "IOA0", "20": "IOA1", "19": "IOA2", "18": "IOA3", "17": "IOA4", "16": "IOA5", "15": "IOA6", "14": "IOA7",
               "13": None, "12": None, "11": None, "10": None, "9": None, "8": None, "7": "JOYSEL", "6": None, "2": None, "5": None})
-    put(4, AY, "U18", "AY-3-8910", a)
-    put(4, HC157, "U19", "74HCT157 joystick directions",
-        {"1": "JOYSEL", "15": G, "2": "J1_UP", "3": "J2_UP", "5": "J1_DOWN", "6": "J2_DOWN", "11": "J1_LEFT", "10": "J2_LEFT",
-         "14": "J1_RIGHT", "13": "J2_RIGHT", "16": V, "8": G, "4": "IOA0", "7": "IOA1", "9": "IOA2", "12": "IOA3"})
-    put(4, HC157, "U20", "74HCT157 joystick buttons",
-        {"1": "JOYSEL", "15": G, "2": "J1_B1", "3": "J2_B1", "5": "J1_B2", "6": "J2_B2", "11": G, "10": G, "14": G, "13": G,
-         "16": V, "8": G, "4": "IOA4", "7": "IOA5", "9": None, "12": None})
-    for ref, j in (("J4", "J1"), ("J5", "J2")):
-        put(4, DB9, ref, f"Joystick {j[1]} (Atari / Sega)",
-            {"1": f"{j}_UP", "2": f"{j}_DOWN", "3": f"{j}_LEFT", "4": f"{j}_RIGHT", "5": V, "6": f"{j}_B1",
-             "7": f"{j}_P7", "8": G, "9": f"{j}_B2", "SH": G})
-    for ref, j in (("RN1", "J1"), ("RN2", "J2")):
-        put(4, RNET, ref, "10k x 8",
-            {"1": V, "2": f"{j}_UP", "3": f"{j}_DOWN", "4": f"{j}_LEFT", "5": f"{j}_RIGHT", "6": f"{j}_B1", "7": f"{j}_B2",
-             "8": "IOA6" if j == "J1" else "IOA7", "9": "JOYSEL" if j == "J1" else None}, gap=10.16)
+    pg.put(0, AY, "U18", "AY-3-8910", a)
+    pg.put(1, HC02, "U12", "74HCT02 AY bus control, USB WR",
+           {"2": "~{AY_CS}", "3": "~{WR}", "1": "BDIR", "5": "~{AY_CS}", "6": "A0", "4": "BC1",
+            "8": "~{USBWRQ}", "9": "A0", "10": "USBWR", "11": G, "12": G, "13": None, "14": V, "7": G})
+    pg.put(1, HC157, "U19", "74HCT157 joystick directions",
+           {"1": "JOYSEL", "15": G, "2": "J1_UP", "3": "J2_UP", "5": "J1_DOWN", "6": "J2_DOWN", "11": "J1_LEFT", "10": "J2_LEFT",
+            "14": "J1_RIGHT", "13": "J2_RIGHT", "16": V, "8": G, "4": "IOA0", "7": "IOA1", "9": "IOA2", "12": "IOA3"})
+    pg.put(1, HC157, "U20", "74HCT157 joystick buttons",
+           {"1": "JOYSEL", "15": G, "2": "J1_B1", "3": "J2_B1", "5": "J1_B2", "6": "J2_B2", "11": G, "10": G, "14": G, "13": G,
+            "16": V, "8": G, "4": "IOA4", "7": "IOA5", "9": None, "12": None})
+    for col, (ref, j) in ((2, ("J4", "J1")), (3, ("J5", "J2"))):
+        pg.put(col, DB9, ref, f"Joystick {j[1]} (Atari / Sega)",
+               {"1": f"{j}_UP", "2": f"{j}_DOWN", "3": f"{j}_LEFT", "4": f"{j}_RIGHT", "5": V, "6": f"{j}_B1",
+                "7": f"{j}_P7", "8": G, "9": f"{j}_B2", "SH": G})
+    for col, (ref, j) in ((2, ("RN1", "J1")), (3, ("RN2", "J2"))):
+        pg.put(col, RNET, ref, "10k x 8",
+               {"1": V, "2": f"{j}_UP", "3": f"{j}_DOWN", "4": f"{j}_LEFT", "5": f"{j}_RIGHT", "6": f"{j}_B1", "7": f"{j}_B2",
+                "8": "IOA6" if j == "J1" else "IOA7", "9": "JOYSEL" if j == "J1" else None})
+    for r, net in zip((16, 17, 18), ("AY_A", "AY_B", "AY_C")):
+        pg.two(RES, f"R{r}", "3k", net, G)  # load for the AY outputs (as electrified/rc2014-ym2149)
+    for r, (val, x, y) in zip(range(19, 23), (("1k", "AY_A", "MIX_L"), ("2.2k", "AY_B", "MIX_L"), ("2.2k", "AY_B", "MIX_R"),
+                                              ("1k", "AY_C", "MIX_R"))):
+        pg.two(RES, f"R{r}", val, x, y)
+    pg.two(CPOL, "C1", "10u", "MIX_L", "AUD_L")
+    pg.two(CPOL, "C2", "10u", "MIX_R", "AUD_R")
+    pg.two(RES, "R23", "47k", "AUD_L", G)
+    pg.two(RES, "R24", "47k", "AUD_R", G)
+    pg.two(RES, "R30", "1k", V, "J1_P7")
+    pg.two(RES, "R31", "1k", V, "J2_P7")
+    decouple(pg)
 
-    # --- column 5: keyboard and expansion -------------------------------------------------------------------------
+    # --- page 5: keyboard and USB -----------------------------------------------------------------------------------
+    pg = Layout(proj.page("Keyboard and USB", "keyboard_usb.kicad_sch"), 4)
     pp = {str(p): d for p, d in zip([34, 33, 32, 31, 30, 29, 28, 27], D)}
     pp.update({"6": "~{PPI_CS}", "5": "~{RD}", "36": "~{WR}", "9": "A0", "8": "A1", "35": "RESET", "26": V, "7": G,
                "4": "PPA0", "3": "PPA1", "2": "PPA2", "1": "PPA3", "40": "PPA4", "39": "PPA5", "38": "PPA6", "37": "PPA7",
                "18": "KCOL0", "19": "KCOL1", "20": "KCOL2", "21": "KCOL3", "22": "KCOL4", "23": "KCOL5", "24": "KCOL6",
                "25": "KCOL7", "14": "KROW0", "15": "KROW1", "16": "KROW2", "17": "KROW3", "13": "PPC4", "12": "PPC5",
                "11": "PPC6", "10": "PPC7"})
-    put(5, PPI, "U21", "82C55A", pp)
-    put(5, MCU, "U22", "ATmega328P: PS/2 to key matrix",
-        {"1": "KB_RST", "23": "KROW0", "24": "KROW1", "25": "KROW2", "26": "KROW3", "27": None, "28": None,
-         "14": "PS2_CLK", "15": "PS2_DATA", "16": None, "17": "KB_MOSI", "18": "KB_MISO", "19": "KB_SCK", "9": None, "10": None,
-         "7": V, "20": V, "21": "KB_AREF", "8": G, "22": G,
-         "2": "KCOL0", "3": "KCOL1", "4": "KCOL2", "5": "KCOL3", "6": "KCOL4", "11": "KCOL5", "12": "KCOL6", "13": "KCOL7"})
-    put(5, PS2, "J6", "PS/2 keyboard", {"1": "PS2_DATA", "2": None, "3": G, "4": V, "5": "PS2_CLK", "6": None, "SH": G})
-    put(5, ISP, "J7", "ISP for the ATmega", {"1": "KB_MISO", "2": V, "3": "KB_SCK", "4": "KB_MOSI", "5": "KB_RST", "6": G})
-    put(5, EXP, "J8", "Expansion (8255 PA, PC4-7)",
-        {"1": "PPA0", "2": "PPA1", "3": "PPA2", "4": "PPA3", "5": "PPA4", "6": "PPA5", "7": "PPA6", "8": "PPA7",
-         "9": "PPC4", "10": "PPC5", "11": "PPC6", "12": "PPC7", "13": V, "14": G})
-
-    # --- column 6: serial, reset, crystal ---------------------------------------------------------------------
+    pg.put(0, PPI, "U21", "82C55A", pp)
+    pg.put(1, MCU, "U22", "ATmega328P: PS/2 to key matrix",
+           {"1": "KB_RST", "23": "KROW0", "24": "KROW1", "25": "KROW2", "26": "KROW3", "27": None, "28": None,
+            "14": "PS2_CLK", "15": "PS2_DATA", "16": None, "17": "KB_MOSI", "18": "KB_MISO", "19": "KB_SCK", "9": None, "10": None,
+            "7": V, "20": V, "21": "KB_AREF", "8": G, "22": G,
+            "2": "KCOL0", "3": "KCOL1", "4": "KCOL2", "5": "KCOL3", "6": "KCOL4", "11": "KCOL5", "12": "KCOL6", "13": "KCOL7"})
+    pg.put(1, PS2, "J6", "PS/2 keyboard", {"1": "PS2_DATA", "2": None, "3": G, "4": V, "5": "PS2_CLK", "6": None, "SH": G})
+    pg.put(1, ISP, "J7", "ISP for the ATmega", {"1": "KB_MISO", "2": V, "3": "KB_SCK", "4": "KB_MOSI", "5": "KB_RST", "6": G})
+    pg.put(0, EXP, "J8", "Expansion (8255 PA, PC4-7)",
+           {"1": "PPA0", "2": "PPA1", "3": "PPA2", "4": "PPA3", "5": "PPA4", "6": "PPA5", "7": "PPA6", "8": "PPA7",
+            "9": "PPC4", "10": "PPC5", "11": "PPC6", "12": "PPC7", "13": V, "14": G})
     usb = {str(p): d for p, d in zip([1, 5, 3, 10, 2, 8, 9, 6], D)}
     usb.update({"12": "~{USBRD}", "18": "USBWR", "15": V, "21": V, "7": G, "24": G, "23": "USB_RXF", "22": "USB_TXE",
                 "11": None, "14": "USB_VBUS", "16": "USB_VBUS", "17": "USB_RST", "20": "USB_RST", "19": None, "4": None,
                 "13": None})  # self powered (DS_UM245R 7.2): J2 open, J1 2-3 so VIO = VCC = board 5 V
-    put(6, UM245R, "U23", "UM245R USB FIFO module", usb)
-    put(6, HC125, "U28", "74HCT125 USB status on D0, D1",
-        {"1": "~{USBST}", "2": "USB_RXF", "4": "~{USBST}", "5": "USB_TXE", "10": V, "9": G, "13": V, "12": G,
-         "3": "D0", "6": "D1", "8": None, "11": None, "14": V, "7": G})
-    put(6, BTN, "SW1", "Reset", {"1": "~{RESET}", "2": G})
-    put(6, JMP, "JP1", "Flash write enable", {"1": "~{WR}", "2": "~{FLWE}"})
-    put(6, XTAL, "Y1", "10.738635 MHz", {"1": "VXT1", "2": "VXT2"})
+    pg.put(2, UM245R, "U23", "UM245R USB FIFO module", usb)
+    # USB FIFO strobes: 80h read = RD# (active low), 80h write = WR (active high, latches on its falling edge), 81h read = status
+    pg.put(3, HC32, "U27", "74HCT32 USB FIFO strobes",
+           {"1": "~{USB_CS}", "2": "~{RD}", "3": "~{USBRDQ}", "4": "~{USBRDQ}", "5": "A0", "6": "~{USBRD}",
+            "9": "~{USBRDQ}", "10": "~{A0}", "8": "~{USBST}", "12": "~{USB_CS}", "13": "~{WR}", "11": "~{USBWRQ}", "14": V, "7": G})
+    pg.put(3, HC125, "U28", "74HCT125 USB status on D0, D1",
+           {"1": "~{USBST}", "2": "USB_RXF", "4": "~{USBST}", "5": "USB_TXE", "10": V, "9": G, "13": V, "12": G,
+            "3": "D0", "6": "D1", "8": None, "11": None, "14": V, "7": G})
+    pg.two(RES, "R12", "10k", V, "KB_RST")
+    pg.two(RES, "R13", "4.7k", V, "PS2_CLK")
+    pg.two(RES, "R14", "4.7k", V, "PS2_DATA")
+    pg.two(CAP, "C5", "100n", "KB_AREF", G)
+    decouple(pg)
 
-    # --- passives ------------------------------------------------------------------------------------------------
-    grid_init(cols[0] - 10, 455, 12)
-    for i, net in enumerate(["PA14", "PA15", "PA16", "PA17", "PA18", "PA19"]):
-        two(RES, f"R{1 + i}", "10k", net, G)  # paging off: the page lines read 0
-    for i, net in enumerate(["~{NMI}", "~{WAIT}", "~{BUSRQ}", "~{INT}", "~{FLWE}", "KB_RST", "PS2_CLK", "PS2_DATA", "~{RESET}"]):
-        two(RES, f"R{7 + i}", "4.7k" if net.startswith("PS2") else "10k", V, net)
-    nxt = iter(range(16, 100))
-    for net in ("AY_A", "AY_B", "AY_C"):
-        two(RES, f"R{next(nxt)}", "3k", net, G)  # load for the AY outputs (as electrified/rc2014-ym2149)
-    for val, x, y in (("1k", "AY_A", "MIX_L"), ("2.2k", "AY_B", "MIX_L"), ("2.2k", "AY_B", "MIX_R"), ("1k", "AY_C", "MIX_R")):
-        two(RES, f"R{next(nxt)}", val, x, y)
-    two(CPOL, "C1", "10u", "MIX_L", "AUD_L")
-    two(CPOL, "C2", "10u", "MIX_R", "AUD_R")
-    for val, x, y in (("47k", "AUD_L", G), ("47k", "AUD_R", G), ("130", "COMVID", "VID_B"), ("470", "VID_B", G),
-                      ("75", "VID_OUT", G), ("75", "BLANK", G), ("1k", "+12V", "SCART_FS"), ("1k", V, "J1_P7"),
-                      ("1k", V, "J2_P7"), ("1k", V, "LED_A")):
-        two(RES, f"R{next(nxt)}", val, x, y)
-    two(LED, "D2", "Power", G, "LED_A")
-    two(DIODE, "D1", "1N5819", "+12V", "+12V_IN")
-    two(DIODE, "D3", "BAT85", "VDP_INT", "~{INT}")
-    two(FBEAD, "FB1", "Ferrite bead", V, "VID_C")
-    two(CAP, "C29", "100n", "VID_C", G)
-    two(CAP, "C30", "22p", "VXT1", G)  # TI: 15-39 pF typical; jblang uses 16 pF
-    two(CAP, "C31", "22p", "VXT2", G)
-    two(CPOL, "C3", "100u", "+12V", G)
-    two(CPOL, "C4", "100u", V, G)
-    two(CAP, "C5", "100n", "KB_AREF", G)
-    for c in range(6, 29):  # 100 nF next to each IC's supply pins; C32-C34 below cover the VRAM chips, placed next to its supply pins
-        two(CAP, f"C{c}", "100n", V, G)
-    for c in range(32, 36):
-        two(CAP, f"C{c}", "100n", V, G)
-    return s
+    # --- page 6: power, reset and TV ----------------------------------------------------------------------------------
+    pg = Layout(proj.page("Power, reset and TV", "power_tv.kicad_sch"), 3)
+    pg.put(0, DCJACK, "J1", "12 V DC in", {"1": "+12V_IN", "2": G, "3": G})
+    pg.put(0, REG, "U14", "R-78E5.0-1.0 (or 7805)", {"1": "+12V", "2": G, "3": V})
+    pg.put(0, PWR_FLAG, "#FLG1", "PWR_FLAG", {"1": G}, gap=7.62)
+    pg.put(0, PWR_FLAG, "#FLG2", "PWR_FLAG", {"1": "+12V"}, gap=7.62)
+    pg.put(0, DS1813, "U13", "DS1813-5 reset", {"2": V, "3": G, "1": "~{RESET}"})
+    pg.put(0, BTN, "SW1", "Reset", {"1": "~{RESET}", "2": G})
+    pg.put(1, SCART, "J2", "SCART",
+           {"1": None, "2": "AUD_R", "3": None, "4": G, "5": G, "6": "AUD_L", "7": "RGB_B", "8": "SCART_FS", "9": G, "10": None,
+            "11": "RGB_G", "12": None, "13": G, "14": G, "15": "RGB_R", "16": "BLANK", "17": G, "18": G, "19": None,
+            "20": "VID_OUT", "21": G})
+    pg.put(2, RGBHDR, "J3", "RGB board (later)", {"1": "RGB_R", "2": "RGB_G", "3": "RGB_B", "4": "BLANK", "5": G, "6": V,
+                                                   "7": "EXTVDP"})
+    pg.two(DIODE, "D1", "1N5819", "+12V", "+12V_IN")
+    pg.two(CPOL, "C3", "100u", "+12V", G)
+    pg.two(CPOL, "C4", "100u", V, G)
+    pg.two(RES, "R15", "10k", V, "~{RESET}")
+    pg.two(RES, "R28", "75", "BLANK", G)
+    pg.two(RES, "R29", "1k", "+12V", "SCART_FS")
+    pg.two(RES, "R32", "1k", V, "LED_A")
+    pg.two(LED, "D2", "Power", G, "LED_A")
+    return proj
 
 
 def main():
-    s = build()
-    s.add_text(20, 20, "ZL-80 board, generated by hardware/kicad/gen_schematic.py from docs/hardware.md. Connections are by net name.\n"
-                       "NOT BUILT OR TESTED. Check every pin against the datasheets before ordering a board.", 2.5)
-    s.write_library(HERE)
-    s.write(os.path.join(HERE, "zl80.kicad_sch"), date="2026-10-27", rev="0.1",
-            comments=("Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, UM245R USB FIFO",
-                      "Design only: not built or tested"))
-    single = {k: v for k, v in s.nets.items() if len(v) < 2}
+    proj = build()
+    proj.notes = [(20, 20, "ZL-80 board, generated by hardware/kicad/gen_schematic.py from docs/hardware.md.\n"
+                           "Each box is a page. Labels with the same name are connected; the labels in a frame\n"
+                           "(global labels) go to other pages.\n"
+                           "NOT BUILT OR TESTED. Check every pin against the datasheets before ordering a board.", 2)]
+    proj.write_library(HERE)
+    proj.write(HERE, date="2026-10-27", rev="0.2",
+               comments=("Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, UM245R USB FIFO",
+                         "Design only: not built or tested"))
+    nets = proj.nets
     with open(os.path.join(HERE, "zl80-netlist.txt"), "w", encoding="utf-8", newline="\n") as fh:
-        for net in sorted(s.nets, key=lambda k: (k.strip("~{}").lower(), k)):
-            fh.write(f"{net}: {' '.join(sorted(s.nets[net]))}\n")
-    print(f"{len(s.refs)} parts, {len(s.nets)} nets")
-    for k, v in single.items():
-        print("NET WITH ONE PIN:", k, v)
+        for net in sorted(nets, key=lambda k: (k.strip("~{}").lower(), k)):
+            fh.write(f"{net}: {' '.join(sorted(nets[net]))}\n")
+    print(f"{len(proj.refs)} parts, {len(nets)} nets, pages: "
+          + ", ".join(f"{sh.title} ({sh.paper})" for sh, _, _ in proj.pages))
+    for k, v in nets.items():
+        if len(v) < 2:
+            print("NET WITH ONE PIN:", k, v)
 
 
 if __name__ == "__main__":
