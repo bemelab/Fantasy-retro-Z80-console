@@ -47,7 +47,7 @@ table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical
  <select id="aych" aria-label="Sound chip"><option value="8910">AY-3-8910 (40 pins, ports A and B)</option><option value="8912">AY-3-8912 (28 pins, port A only)</option></select>
 </div>
 <div class="row" id="hwrow" hidden>
- <button id="rom" title="512 KB flash image for an EEPROM programmer: kernel in page 0, this program in pages 1-2">ROM .bin</button><button id="hexb" title="This program as Intel HEX at 4000h, for the serial loader">HEX</button><button id="usb" title="Send this program to a ZL-80 board on a USB serial port (Web Serial, Chrome or Edge)">Send to board</button><button id="emus" title="Send this program to the emulated board through its serial port, the same way">Send to emulator</button>
+ <button id="rom" title="512 KB flash image for an EEPROM programmer: kernel in page 0, this program in pages 1-2">ROM .bin</button><button id="hexb" title="This program as Intel HEX at 4000h, for the serial loader">HEX</button><button id="usb" title="Send this program to a ZL-80 board over USB: its UM245R shows up as a serial port (Web Serial, Chrome or Edge)">Send to board</button><button id="emus" title="Send this program to the emulated board through its USB FIFO, the same way">Send to emulator</button>
  <pre id="ser" style="flex-basis:100%;margin:0"></pre>
 </div>
 <textarea id="src" spellcheck="false" aria-label="ZL source code"></textarea>
@@ -2032,10 +2032,10 @@ function step(){
  cpu.step()}
 
 /* ZL-80 board (docs/hardware.md). Z80 at 3.58 MHz; 512 KB flash (pages 0-31) and 512 KB RAM (pages 32-63) behind four 16 KB
-   page registers; TMS9918A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; 68B50 on 0x80/0x81.
+   page registers; TMS9918A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; UM245R USB FIFO on 0x80 (data) and 0x81 (status).
    Kernel RAM: 0xFF00 ARGX, 0xFF01 ARGY, 0xFF02 last VDP status, 0xFF03 random seed, 0xFF05/0xFF06 loader record type and error,
    0xFF10-0xFF17 copies of VDP registers R0-R7. */
-const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_TYPE=0xFF05,K_ERR=0xFF06,K_VRS=0xFF10,CHAR_T=311; // CHAR_T: one serial byte (10 bits at 115200) in T-states
+const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_TYPE=0xFF05,K_ERR=0xFF06,K_VRS=0xFF10;
 let KER=null;
 // kernel ROM, flash page 0: start-up, interrupt handler and the routines compiled ZL calls; tables from 0x3000
 function buildKernel(){
@@ -2047,12 +2047,11 @@ function buildKernel(){
  b(0xF3,0xAF,0xED,0x47);map();b(0xC3);w("START");                          // DI; LD I,A (0)
  p=0x38;lab("ISR");                                                        // IM 1: once per frame
  b(0xF5,0xDB,0x99,0x32);nn(K_STAT);                                        // PUSH AF; IN A,(99h) clears the interrupt; LD (stat),A
- b(0xDB,0x80,0x0F,0x30);r("isr1");b(0xDB,0x81,0xFE,0x03,0xCA);w("LOADER");// a 03h (Ctrl-C) on the serial port starts the loader
+ b(0xDB,0x81,0x0F,0x38);r("isr1");b(0xDB,0x80,0xFE,0x03,0xCA);w("LOADER");// a 03h (Ctrl-C) from USB starts the loader
  lab("isr1");b(0xF1,0xFB,0xED,0x4D);                                       // POP AF; EI; RETI
  lab("START");
  b(0x21);nn(0xC000);b(0x11);nn(0xC001);b(0x01);nn(0x3FFF);b(0x36,0,0xED,0xB0); // RAM 0xC000-0xFFFF = 0 (variables start at 0)
  b(0x31);nn(0xFF00);b(0xED,0x56);                                         // LD SP,FF00h; IM 1
- b(0xED,0x57,0xB7,0x20);r("warm1");b(0x3E,0x03,0xD3,0x80,0x3E,0x16,0xD3,0x80);lab("warm1"); // cold start: 68B50 reset, then 8N1 at 7.3728 MHz / 64 = 115200
  b(0x3E,0x82,0xD3,0xAB,0x3E,0x08,0xD3,0xAA);                               // 8255: A out, B in, C out; keyboard row 8
  b(0x3E,7,0xD3,0xA0,0x3E,0xBF,0xD3,0xA1);                                  // AY R7: sound off, port A in (joysticks), port B out
  b(0x21);w("VINIT");b(0x11);nn(K_VRS);b(0x01);nn(8);b(0xED,0xB0);          // RAM copies of R0-R7
@@ -2116,7 +2115,7 @@ function buildKernel(){
  lab("VWR");b(0xD3,0x98,0xC9);lab("VRD");b(0xDB,0x98,0xC9);
  lab("VFONT");b(0x3A);nn(K_VRS+4);b(0xE6,0x07,0x07,0x07,0x07,0x3C,0xF6,0x40,0x47,0xF3,0xAF,0xD3,0x99,0x78,0xD3,0x99,0xFB);
  b(0x21);nn(0x3300);b(0x11);nn(512);lab("vf");b(0x7E,0xD3,0x98,0x23,0x1B,0x7A,0xB3,0x20);r("vf");b(0xC9); // characters 32-95
- // serial loader: Intel HEX records at 115200 baud. It answers > when ready, . for each good record, ! for a bad checksum
+ // serial loader: Intel HEX records over the USB FIFO. It answers > when ready, . for each good record, ! for a bad checksum
  // or an address outside 4000h-BFFFh, and * for the end record; then it starts the program warm (I = 1)
  lab("LOADER");b(0xF3,0x31);nn(0xFF00);map();
  lab("lprompt");b(0x3E,0x3E,0xCD);w("PUTC");
@@ -2132,8 +2131,9 @@ function buildKernel(){
  b(0x3A);nn(K_TYPE);b(0xFE,0x01,0x28);r("leof");b(0x3E,0x2E,0xCD);w("PUTC");b(0x18);r("lrec");
  lab("lbad");b(0x3E,0x21,0xCD);w("PUTC");b(0x18);r("lrec");
  lab("leof");b(0x3E,0x2A,0xCD);w("PUTC");b(0x3E,1,0xED,0x47,0xC3);w("START");
- lab("PUTC");b(0xF5);lab("pw");b(0xDB,0x80,0xE6,0x02,0x28);r("pw");b(0xF1,0xD3,0x81,0xC9); // wait until the 68B50 can take a byte
- lab("GETC");b(0xDB,0x80,0x0F,0x30);r("GETC");b(0xDB,0x81,0xC9);
+ // USB FIFO: port 81h bit 0 = RXF# (0: a byte is waiting), bit 1 = TXE# (0: room to send); port 80h = data
+ lab("PUTC");b(0xF5);lab("pw");b(0xDB,0x81,0xE6,0x02,0x20);r("pw");b(0xF1,0xD3,0x80,0xC9);
+ lab("GETC");b(0xDB,0x81,0x0F,0x38);r("GETC");b(0xDB,0x80,0xC9);
  lab("GETNIB");b(0xCD);w("GETC");b(0xD6,0x30,0xFE,0x0A,0xD8,0xD6,0x07,0xE6,0x0F,0xC9); // hex digit (either case) -> 0-15
  lab("GETHEX");b(0xCD);w("GETNIB");b(0x07,0x07,0x07,0x07,0x6F,0xCD);w("GETNIB");b(0xB5,0x6F,0x81,0x4F,0x7D,0xC9); // byte; C += byte
  if(p>0x3000)throw Error("kernel code too big");
@@ -2145,9 +2145,10 @@ function buildKernel(){
  return {rom:k,s}}
 const phys=new Uint8Array(0x100000),pgReg=new Uint8Array(4),bankOff=new Int32Array(4),kbm=new Uint8Array(11);
 let pgOn=0,ppiA=0,ppiC=0,hwF0=0,vLast=-1e9,hwIdle=0;
-// 68B50 at 115200 baud: a received byte waits in RDR until read; one that arrives before that is lost (overrun)
-const acia={rx:[],rdr:0,rdrf:0,ovr:0,rxT:0,txT:0,out:[]};
-function aciaTick(){if(acia.rx.length&&cpu.cyc>=acia.rxT){const v=acia.rx.shift();if(acia.rdrf)acia.ovr=1;else{acia.rdr=v;acia.rdrf=1}acia.rxT=cpu.cyc+CHAR_T}}
+// UM245R (FT245R) USB FIFO: 256 bytes received from the PC wait in its FIFO; when it is full the PC waits, so nothing is lost.
+// Bytes the Z80 sends are taken by the PC's driver at once, so TXE# stays low. host = bytes the PC has not handed over yet.
+const usbq={host:[],rx:[],out:[]};
+function usbTick(){while(usbq.host.length&&usbq.rx.length<256)usbq.rx.push(usbq.host.shift())}
 function remap(){for(let i=0;i<4;i++)bankOff[i]=(pgOn?pgReg[i]&63:0)<<14}
 const hwCpu=Z80({rd:a=>phys[bankOff[a>>14]|a&0x3FFF],wr:(a,v)=>{const o=bankOff[a>>14];if(o>=0x80000)phys[o|a&0x3FFF]=v},in:p=>hwIn(p&255),out:(p,v)=>hwOut(p&255,v)});
 function hwFault(m){if(!bad)bad=m+" (PC 0x"+hx(cpu.pc,4)+")"}
@@ -2161,8 +2162,8 @@ const joy2=()=>AYTYPE===8912?ppiC&0x10:AYR[7]&0x80?AYR[15]&0x40:1;
 const joyPort=()=>joy2()?0xFF:~((keys&4?1:0)|(keys&8?2:0)|(keys&1?4:0)|(keys&2?8:0)|(keys&16?16:0))&255;
 function hwIn(p){
  switch(p){
-  case 0x80:return acia.rdrf|(cpu.cyc>=acia.txT?2:0)|(acia.ovr?0x20:0); // 68B50 status: RDRF, TDRE, overrun
-  case 0x81:acia.rdrf=0;acia.ovr=0;return acia.rdr;
+  case 0x80:if(!usbq.rx.length){hwFault("read from the USB FIFO while it was empty (check RXF# on port 81h first)");return 0xFF}return usbq.rx.shift();
+  case 0x81:return 0xFC|(usbq.rx.length?0:1); // 74HCT125 puts RXF# on D0 and TXE# (low: room) on D1; D2-D7 are not driven
   case 0x98:vdpAccess();return tmsRead();
   case 0x99:return tmsStatus();
   case 0xA2:return ayRead();
@@ -2174,8 +2175,8 @@ function hwOut(p,v){
  if(p>=0x78&&p<=0x7B){pgReg[p-0x78]=v&63;remap();return}
  switch(p){
   case 0x7C:pgOn=v&1;remap();return;
-  case 0x80:if((v&3)===3){acia.rdrf=0;acia.ovr=0}return; // control; 03h is the master reset
-  case 0x81:if(cpu.cyc<acia.txT)hwFault("68B50: a byte was written before the last one was sent");acia.txT=cpu.cyc+CHAR_T;acia.out.push(v);return;
+  case 0x80:usbq.out.push(v);if(usbq.out.length>4096)usbq.out.shift();return;
+  case 0x81:hwFault("port 0x81 is the USB FIFO status and cannot be written");return;
   case 0x98:vdpAccess();ioOut(14,v);return;
   case 0x99:if(vlat>=0&&!(v&0xC0))vdpAccess();ioOut(15,v);return; // setting a read address makes the VDP read ahead
   case 0xA0:aySel=v&15;return;
@@ -2190,11 +2191,11 @@ function bootHW(code){
  for(let i=0x80000;i<0x100000;i++)phys[i]=Math.random()*256|0;        // RAM and VRAM hold random values at power-on
  for(let i=0;i<16384;i++)vram[i]=Math.random()*256|0;
  VR.fill(0);vlat=-1;vad=0;vbuf=0;tmsStat=0;ayReset();pgReg.fill(0);pgOn=0;remap();ppiA=ppiC=0;
- cpu.reset();cpu.cyc=0;hwF0=0;vLast=-1e9;bad=null;acia.rx.length=0;acia.out.length=0;acia.rdrf=acia.ovr=0;acia.rxT=acia.txT=0}
+ cpu.reset();cpu.cyc=0;hwF0=0;vLast=-1e9;bad=null;usbq.host.length=usbq.rx.length=usbq.out.length=0}
 function hwStep(){
  cpu.irq=!!(VR[1]&0x20&&tmsStat&0x80);
  if(cpu.halted)hwIdle+=4;
- if(acia.rx.length)aciaTick();
+ if(usbq.host.length)usbTick();
  cpu.step();
  if(cpu.sp<0xF100)hwFault("stack overflow (gosub without return, or goto out of a subroutine)");
  else if(cpu.sp>0xFF00&&cpu.sp<0xFFFF)hwFault("return without gosub")}
@@ -2392,7 +2393,7 @@ async function waitFor(port,set,ms){const end=performance.now()+ms;for(;;){const
 async function sendProgram(port,code){
  port.flush();slog("Waking the board (Ctrl-C)...");let ok=false;
  for(let i=0;i<60&&!ok;i++){await port.write([3]);ok=!!await waitFor(port,">",100)}
- if(!ok)throw Error("No answer from the board. Is it on, with the kernel running, at 115200 baud?");
+ if(!ok)throw Error("No answer from the board. Is it on, with the kernel running, and connected by USB?");
  const L=hexLines(code,0x4000);
  for(let i=0;i<L.length;i++){
   await port.write([...L[i]+(i<L.length-1?"\r\n":"")].map(c=>c.charCodeAt(0))); // nothing after the end record: the board is already restarting
@@ -2400,13 +2401,13 @@ async function sendProgram(port,code){
   if(c!==want)throw Error(c==="!"?"The board rejected record "+(i+1)+" (checksum or address).":"No answer after record "+(i+1)+".");
   slog("Sending: record "+(i+1)+" of "+L.length)}
  slog("Sent "+code.length+" bytes in "+L.length+" records. The board is running the program.")}
-// the emulated board's 68B50, behind the same small interface as a real port
-const emuPort={write:async b=>{if(!acia.rx.length&&acia.rxT<cpu.cyc)acia.rxT=cpu.cyc+CHAR_T;acia.rx.push(...b)},take:()=>acia.out.shift(),flush:()=>{acia.out.length=0}};
+// the emulated board's USB FIFO, behind the same small interface as a real port
+const emuPort={write:async b=>{usbq.host.push(...b)},take:()=>usbq.out.shift(),flush:()=>{usbq.out.length=0}};
 let usb=null;
 async function usbPort(){
  if(usb)return usb;
  if(!navigator.serial)throw Error("This browser has no Web Serial. Use Chrome or Edge on a desktop.");
- const port=await navigator.serial.requestPort();await port.open({baudRate:115200,dataBits:8,stopBits:1,parity:"none"});
+ const port=await navigator.serial.requestPort();await port.open({baudRate:115200}); // the FT245R ignores the rate; Web Serial still needs one
  const q=[],w=port.writable.getWriter(),r=port.readable.getReader();
  (async()=>{try{for(;;){const {value,done}=await r.read();if(done)break;q.push(...value)}}catch(x){}usb=null})();
  return usb={write:b=>w.write(new Uint8Array(b)),take:()=>q.shift(),flush:()=>{q.length=0}}}

@@ -68,13 +68,13 @@ PPI = Part("82C55A", [L(34, "D0", B), L(33, "D1", B), L(32, "D2", B), L(31, "D3"
                        R(11, "PC6", B), R(10, "PC7", B)],
            footprint=DIP6(40), width=22.86)
 
-ACIA = Part("MC68B50", [L(22, "D0", B), L(21, "D1", B), L(20, "D2", B), L(19, "D3", B), L(18, "D4", B), L(17, "D5", B),
-                         L(16, "D6", B), L(15, "D7", B), None, L(8, "CS0", I), L(10, "CS1", I), L(9, "~{CS2}", I),
-                         L(11, "RS", I), L(13, "R/~{W}", I), L(14, "E", I), L(7, "~{IRQ}", OC), None,
-                         L(12, "VCC", PI), L(1, "VSS", PI),
-                         R(4, "TXCLK", I), R(3, "RXCLK", I), ("gap", "R"), R(6, "TXDATA", O), R(2, "RXDATA", I),
-                         R(5, "~{RTS}", O), R(24, "~{CTS}", I), R(23, "~{DCD}", I)],
-            footprint=DIP6(24), width=22.86)
+# UM245R: FTDI's FT245R USB FIFO module on a 24-pin 0.6 in DIP footprint (FTDI DS_UM245R, table 4.2)
+UM245R = Part("UM245R", [L(1, "DB0", B), L(5, "DB1", B), L(3, "DB2", B), L(10, "DB3", B), L(2, "DB4", B), L(8, "DB5", B),
+                         L(9, "DB6", B), L(6, "DB7", B), None, L(12, "RD#", I), L(18, "WR", I), L(20, "RST#", I), None,
+                         L(15, "VCC", PI), L(21, "VCC", PI), L(7, "GND", PI), L(24, "GND", PI),
+                         R(23, "RXF#", O), R(22, "TXE#", O), R(11, "PWE#", O), ("gap", "R"), R(14, "USB (5V out)", P),
+                         R(16, "PU2", P), R(17, "PU1", P), R(19, "3V3 out", P), R(4, "VIO", P), R(13, "SLD", P)],
+              footprint=DIP6(24), width=25.4)
 
 PAGE = Part("74HCT670", [L(15, "D0", I), L(1, "D1", I), L(2, "D2", I), L(3, "D3", I), None, L(14, "WA0", I), L(13, "WA1", I),
                           L(12, "~{WE}", I), None, L(5, "RA0", I), L(4, "RA1", I), L(11, "~{RE}", I), None,
@@ -138,8 +138,9 @@ HC04 = Part("74HCT04", [L(1, "1A", I), L(3, "2A", I), L(5, "3A", I), L(9, "4A", 
 
 DS1813 = Part("DS1813", [L(2, "VCC", PI), L(3, "GND", PI), R(1, "~{RST}", OC)], footprint="Package_TO_SOT_THT:TO-92_Inline",
               width=15.24)
-OSC = Part("Oscillator_DIP14", [L(14, "VCC", PI), L(7, "GND", PI), L(1, "EN/NC", P), R(8, "OUT", O)],
-           footprint="Oscillator:Oscillator_DIP-14", width=17.78)
+HC125 = Part("74HCT125", [L(1, "~{1OE}", I), L(2, "1A", I), L(4, "~{2OE}", I), L(5, "2A", I), L(10, "~{3OE}", I), L(9, "3A", I),
+                           L(13, "~{4OE}", I), L(12, "4A", I), None, L(14, "VCC", PI), L(7, "GND", PI),
+                           R(3, "1Y", O), R(6, "2Y", O), R(8, "3Y", O), R(11, "4Y", O)], footprint=DIP(14))
 REG = Part("Regulator_5V", [L(1, "VIN", PI), L(2, "GND", PI), R(3, "VOUT", PO)], footprint="Package_TO_SOT_THT:TO-220-3_Vertical",
            width=15.24)
 RES = Part("R", [L(1, "~"), R(2, "~")], ref="R", footprint="Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal",
@@ -171,8 +172,6 @@ SCART = conn_part("SCART", [(1, "Audio R out"), (2, "Audio R in"), (3, "Audio L 
 DB9 = conn_part("DB9_Joystick", [(1, "Up"), (2, "Down"), (3, "Left"), (4, "Right"), (5, "+5V (Sega)"), (6, "Button 1"),
                                  (7, "+5V (Atari) / TH"), (8, "GND"), (9, "Button 2"), ("SH", "Shield")])
 PS2 = conn_part("MiniDIN6_PS2", [(1, "Data"), (2, "NC"), (3, "GND"), (4, "+5V"), (5, "Clock"), (6, "NC"), ("SH", "Shield")])
-FTDI = conn_part("Serial_FTDI6", [(1, "GND"), (2, "CTS"), (3, "VCC"), (4, "TXD"), (5, "RXD"), (6, "RTS")],
-                 "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical")
 ISP = conn_part("AVR_ISP6", [(1, "MISO"), (2, "VCC"), (3, "SCK"), (4, "MOSI"), (5, "~{RESET}"), (6, "GND")],
                 "Connector_PinHeader_2.54mm:PinHeader_2x03_P2.54mm_Vertical")
 DCJACK = conn_part("Barrel_Jack", [(1, "+ (tip)"), (2, "- (sleeve)"), (3, "switch")], "Connector_BarrelJack:BarrelJack_Horizontal")
@@ -245,7 +244,7 @@ def build():
          "11": "~{PGEN}", "16": V, "8": G, "10": "PA18", "9": "PA19", "7": None, "6": None})
     put(1, HC138, "U6", "74HCT138 I/O 80h-BFh",
         {"1": "A3", "2": "A4", "3": "A5", "6": "A7", "4": "A6", "5": "~{IOSEL}", "16": V, "8": G,
-         "15": "~{ACIA_CS}", "14": None, "13": None, "12": "~{VDP_CS}", "11": "~{AY_CS}", "10": "~{PPI_CS}", "9": None, "7": None})
+         "15": "~{USB_CS}", "14": None, "13": None, "12": "~{VDP_CS}", "11": "~{AY_CS}", "10": "~{PPI_CS}", "9": None, "7": None})
     put(1, HC138, "U7", "74HCT138 I/O 00h-7Fh",
         {"1": "A3", "2": "A4", "3": "A5", "6": "A6", "4": "A7", "5": "~{IOSEL}", "16": V, "8": G,
          "15": None, "14": None, "13": None, "12": None, "11": None, "10": None, "9": None, "7": "~{MAP_CS}"})
@@ -259,15 +258,18 @@ def build():
     # --- column 2: inverters, flip-flops, AY bus control, power -------------------------------------------------
     put(2, HC04, "U10", "74HCT04",
         {"1": "~{M1}", "2": "M1", "3": "PA19", "4": "~{PA19}", "5": "A2", "6": "~{A2}", "9": "~{RESET}", "8": "RESET",
-         "11": "CPUCLK", "10": "ZCLK", "13": "~{IORQ}", "12": "E_ACIA", "14": V, "7": G})
+         "11": "CPUCLK", "10": "ZCLK", "13": "A0", "12": "~{A0}", "14": V, "7": G})
     put(2, HC74, "U11", "74HCT74 paging on / AY clock",
         {"2": "D0", "3": "~{ENWR}", "4": V, "1": "~{RESET}", "5": None, "6": "~{PGEN}",
          "12": "~{AYCLK}", "11": "CPUCLK", "10": V, "13": V, "9": "AYCLK", "8": "~{AYCLK}", "14": V, "7": G})
     put(2, HC02, "U12", "74HCT02 AY bus control",
         {"2": "~{AY_CS}", "3": "~{WR}", "1": "BDIR", "5": "~{AY_CS}", "6": "A0", "4": "BC1",
-         "8": G, "9": G, "10": None, "11": G, "12": G, "13": None, "14": V, "7": G})
+         "8": "~{USBWRQ}", "9": "A0", "10": "USBWR", "11": G, "12": G, "13": None, "14": V, "7": G})
     put(2, DS1813, "U13", "DS1813-5 reset", {"2": V, "3": G, "1": "~{RESET}"})
-    put(2, OSC, "X1", "7.3728 MHz oscillator", {"14": V, "7": G, "1": None, "8": "ACLK"})
+    # USB FIFO strobes: 80h read = RD# (active low), 80h write = WR (active high, latches on its falling edge), 81h read = status
+    put(2, HC32, "U27", "74HCT32 USB FIFO strobes",
+        {"1": "~{USB_CS}", "2": "~{RD}", "3": "~{USBRDQ}", "4": "~{USBRDQ}", "5": "A0", "6": "~{USBRD}",
+         "9": "~{USBRDQ}", "10": "~{A0}", "8": "~{USBST}", "12": "~{USB_CS}", "13": "~{WR}", "11": "~{USBWRQ}", "14": V, "7": G})
     put(2, REG, "U14", "R-78E5.0-1.0 (or 7805)", {"1": "+12V", "2": G, "3": V})
     put(2, PWR_FLAG, "#FLG1", "PWR_FLAG", {"1": G}, gap=7.62)
     put(2, PWR_FLAG, "#FLG2", "PWR_FLAG", {"1": "+12V"}, gap=7.62)
@@ -351,11 +353,14 @@ def build():
          "9": "PPC4", "10": "PPC5", "11": "PPC6", "12": "PPC7", "13": V, "14": G})
 
     # --- column 6: serial, reset, crystal ---------------------------------------------------------------------
-    ac = {str(p): d for p, d in zip([22, 21, 20, 19, 18, 17, 16, 15], D)}
-    ac.update({"8": V, "10": V, "9": "~{ACIA_CS}", "11": "A0", "13": "~{WR}", "14": "E_ACIA", "7": None, "12": V, "1": G,
-               "4": "ACLK", "3": "ACLK", "6": "SER_TX", "2": "SER_RX", "5": "SER_RTS", "24": G, "23": G})
-    put(6, ACIA, "U23", "MC68B50 ACIA", ac)
-    put(6, FTDI, "J9", "USB serial (FTDI cable, 5 V)", {"1": G, "2": "SER_RTS", "3": None, "4": "SER_RX", "5": "SER_TX", "6": None})
+    usb = {str(p): d for p, d in zip([1, 5, 3, 10, 2, 8, 9, 6], D)}
+    usb.update({"12": "~{USBRD}", "18": "USBWR", "15": V, "21": V, "7": G, "24": G, "23": "USB_RXF", "22": "USB_TXE",
+                "11": None, "14": "USB_VBUS", "16": "USB_VBUS", "17": "USB_RST", "20": "USB_RST", "19": None, "4": None,
+                "13": None})  # self powered (DS_UM245R 7.2): J2 open, J1 2-3 so VIO = VCC = board 5 V
+    put(6, UM245R, "U23", "UM245R USB FIFO module", usb)
+    put(6, HC125, "U28", "74HCT125 USB status on D0, D1",
+        {"1": "~{USBST}", "2": "USB_RXF", "4": "~{USBST}", "5": "USB_TXE", "10": V, "9": G, "13": V, "12": G,
+         "3": "D0", "6": "D1", "8": None, "11": None, "14": V, "7": G})
     put(6, BTN, "SW1", "Reset", {"1": "~{RESET}", "2": G})
     put(6, JMP, "JP1", "Flash write enable", {"1": "~{WR}", "2": "~{FLWE}"})
     put(6, XTAL, "Y1", "10.738635 MHz", {"1": "VXT1", "2": "VXT2"})
@@ -389,7 +394,7 @@ def build():
     two(CAP, "C5", "100n", "KB_AREF", G)
     for c in range(6, 29):  # 100 nF next to each IC's supply pins; C32-C34 below cover the VRAM chips, placed next to its supply pins
         two(CAP, f"C{c}", "100n", V, G)
-    for c in range(32, 35):
+    for c in range(32, 36):
         two(CAP, f"C{c}", "100n", V, G)
     return s
 
@@ -400,7 +405,7 @@ def main():
                        "NOT BUILT OR TESTED. Check every pin against the datasheets before ordering a board.", 2.5)
     s.write_library(HERE)
     s.write(os.path.join(HERE, "zl80.kicad_sch"), date="2026-10-27", rev="0.1",
-            comments=("Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, MC68B50",
+            comments=("Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, UM245R USB FIFO",
                       "Design only: not built or tested"))
     single = {k: v for k, v in s.nets.items() if len(v) < 2}
     with open(os.path.join(HERE, "zl80-netlist.txt"), "w", encoding="utf-8", newline="\n") as fh:
