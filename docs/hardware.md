@@ -21,7 +21,7 @@ Status: design. Nothing here is built or tested yet. The schematic is in `hardwa
    A B C ----> stereo mix --> SCART audio L/R      |
    port A <--- 2 joysticks (DB9)                   |
  8255 PPI <--- ATmega328P <--- PS/2 PC keyboard    |
- UM245R USB FIFO <-- USB <-- PC / browser ---------+
+ FT245RL USB FIFO <-- USB-C <-- PC / browser -------+
 ```
 
 ## Main parts
@@ -34,11 +34,12 @@ Status: design. Nothing here is built or tested yet. The schematic is in `hardwa
 | Sound | AY-3-8910, 1.789773 MHz | 40 pins: I/O port A for the joysticks, port B bit 6 to choose joystick 1 or 2. (The emulator also offers the AY-3-8912; see "Joysticks".) |
 | ROM | 512 KB flash, SST39SF040 (DIP-32) | The largest common 5 V parallel flash in DIP. It can be rewritten in the console. |
 | RAM | 512 KB SRAM, AS6C4008-55PCN (DIP-32) | The largest common 5 V SRAM in DIP. Its pins 3, 29 and 31 differ from the flash, so the sockets are not interchangeable. The "AS6C4008A" is 3.3 V only. |
-| Keyboard | PS/2 PC keyboard, ATmega328P, 8255 PPI | See "Keyboard". |
+| Keyboard | PS/2 PC keyboard, ATmega328P-AU, 8255 PPI | See "Keyboard". |
+| Packages | DIP-40 in sockets for the Z80, TMS9918A, AY-3-8910 and 82C55 (the chips in hand) and DIP-32 in a socket for the flash, so it can go in an EEPROM programmer; everything else surface mount | Flash SST39SF040-70-4C-PHE in PDIP-32, SRAM AS6C4008-55SIN in SOP-32, VRAM AS6C62256-55SCN in SOP-28, logic in SOIC, ATmega328P-AU in TQFP-32, FT245RL in SSOP-28, passives 0805. |
 | Joysticks | 2 x DB9 (Atari/Sega pinout), two 74HCT157 | Same wiring idea as MSX. |
-| USB | UM245R module (FTDI FT245R USB FIFO, 24-pin DIP footprint) | Loads programs from a PC or straight from the browser (Web Serial): the PC sees a serial port. 256-byte receive and 128-byte transmit FIFOs; when the receive FIFO is full the PC waits, so no byte is lost. Up to about 1 MB/s. |
+| USB | FT245RL USB FIFO (SSOP-28) and a USB-C socket (GCT USB4105-GF-A) | Loads programs from a PC or straight from the browser (Web Serial): the PC sees a serial port. 256-byte receive and 128-byte transmit FIFOs; when the receive FIFO is full the PC waits, so no byte is lost. Up to about 1 MB/s. |
 | TV | SCART: composite video, stereo audio, 4:3 switching | See "SCART". |
-| Glue | 74HCT138 x2, 74HCT32 x3, 74HCT02, 74HCT04, 74HCT74, 74HCT125, 74HCT670 x2 | See "Address decoding". HCT parts accept the TTL-level outputs of the NMOS TMS9918A and AY-3-8910. |
+| Glue | 74HCT138 x2, 74HCT32 x3, 74HCT02, 74HCT04 x2, 74HCT74, 74HCT125, 74HCT574 x3, 74HC670 x2 | See "Address decoding". HCT parts accept the TTL-level outputs of the NMOS TMS9918A and AY-3-8910. The 74HCT670 is no longer made in SOIC; the 74HC670 (CD74HC670M96) is, and all its inputs come from CMOS outputs. |
 
 ## Clocks and timing
 
@@ -49,7 +50,7 @@ Status: design. Nothing here is built or tested yet. The schematic is in `hardwa
 
 ## Memory
 
-The Z80 sees 64 KB, split into four 16 KB banks. Each bank can show any of 64 pages: pages 0 to 31 are flash, pages 32 to 63 are RAM. This page mapper is the same as on the Zeta SBC v2 and the RC2014 512K ROM 512K RAM module (two 74HCT670 page registers).
+The Z80 sees 64 KB, split into four 16 KB banks. Each bank can show any of 64 pages: pages 0 to 31 are flash, pages 32 to 63 are RAM. This page mapper is the same as on the Zeta SBC v2 and the RC2014 512K ROM 512K RAM module (two 74HC670 page registers).
 
 | Port | Use |
 |---|---|
@@ -73,14 +74,14 @@ The other pages (flash 1 to 31, RAM 35 to 63, about 900 KB) hold stored programs
 
 All decoding uses HCT logic.
 
-- **Memory:** two 74HCT670 hold a 6-bit page number for each bank. Their read address is A14 and A15 (the bank). The outputs PA14-PA19 go to address lines A14-A18 of both memory chips, and PA19 chooses the chip: 0 = flash, 1 = RAM. Flash /CE = /MREQ OR PA19; RAM /CE = /MREQ OR NOT PA19.
+- **Memory:** two 74HC670 hold a 6-bit page number for each bank. Their read address is A14 and A15 (the bank). The outputs PA14-PA19 go to address lines A14-A18 of both memory chips, and PA19 chooses the chip: 0 = flash, 1 = RAM. Flash /CE = /MREQ OR PA19; RAM /CE = /MREQ OR NOT PA19.
 - **Paging off at reset:** a 74HCT74 flip-flop (cleared by /RESET) drives the 670 output enables. With paging off the outputs float, and six 10 kohm pull-downs make PA14-PA19 read 0: flash page 0 in every bank.
 - **Flash writes:** flash /WE goes through jumper JP1 from /WR. With JP1 open, nothing can write the flash. With it closed the flash still needs its unlock sequence.
 - **I/O:** IOSEL = /IORQ OR M1, so interrupt-acknowledge cycles select nothing. One 74HCT138 (A7 = 1, A6 = 0) gives 80h-87h (USB FIFO), 98h-9Fh (VDP), A0h-A7h (AY) and A8h-AFh (8255). A second 74HCT138 (A7 = 0, A6 = 1) gives 78h-7Fh for the page registers (A2 = 0) and the paging flip-flop (A2 = 1).
 - **VDP:** /CSW = VDPSEL OR /WR, /CSR = VDPSEL OR /RD, MODE = A0. CD0 is the VDP's most significant bit, so CD0-CD7 go to D7-D0.
 - **AY:** BC2 = A8 = +5 V, /A9 = GND. BDIR = NOR(AYSEL, /WR) and BC1 = NOR(AYSEL, A0): A0h write = latch address, A1h write = write data, A2h read = read data.
-- **USB FIFO (UM245R):** RD# = USBSEL OR /RD OR A0 (port 80h read); WR = NOR(USBSEL OR /WR, A0) (port 80h write; the FT245R latches the byte when WR falls); a 74HCT125 puts RXF# on D0 and TXE# on D1 when port 81h is read (USBSEL OR /RD OR NOT A0). The FT245R timing (RD# and WR pulses of at least 50 ns, data valid 50 ns after RD#) is well inside a Z80 I/O cycle.
-- **UM245R power (self powered, DS_UM245R section 7.2):** jumper J2 open, the board's 5 V on VCC (pins 15 and 21), jumper J1 on pins 2-3 so VIO = VCC = 5 V logic. Pin 14 (USB 5 V) goes to PU2 (pin 16) and PU1 (pin 17) to RST# (pin 20), so the FT245R stays in reset while the PC is off. FTDI also recommends setting the power descriptor in its EEPROM to self powered (FT_PROG).
+- **USB FIFO (FT245RL):** RD# = USBSEL OR /RD OR A0 (port 80h read); WR = NOR(USBSEL OR /WR, A0) (port 80h write; the FT245R latches the byte when WR falls); a 74HCT125 puts RXF# on D0 and TXE# on D1 when port 81h is read (USBSEL OR /RD OR NOT A0). The FT245R timing (RD# and WR pulses of at least 50 ns, data valid 50 ns after RD#) is well inside a Z80 I/O cycle.
+- **FT245RL wiring (self powered, DS_FT245R figure 6.2):** VCC and VCCIO on the board's 5 V (5 V logic levels), 3V3OUT with 100 nF only, AGND, GND and TEST to GND, OSCI/OSCO open, /PWREN with a 10 kohm pull-up. USBDP and USBDM go straight to the USB-C D+ and D- pins (both sides of the socket). /RESET comes from the PC's VBUS through 4.7 kohm with 10 kohm to GND, so the FT245R stays in reset while the PC is off and does not drive the USB lines. CC1 and CC2 each have 5.1 kohm to GND (a USB-C device). The socket shell goes to GND through 10 nF. 100 nF + 100 nF + 4.7 uF on VCC. FTDI recommends setting the power descriptor in its EEPROM to self powered (FT_PROG).
 - **8255:** RESET (active high) = NOT /RESET.
 - **Interrupt:** the VDP /INT reaches the Z80 /INT through a BAT85 Schottky diode (cathode at the VDP) with a 10 kohm pull-up, as on jblang's board, so other sources can be added later.
 
@@ -91,8 +92,8 @@ The Z80 decodes the low 8 address bits for I/O. The video, sound and keyboard po
 | Port | Device | Use |
 |---|---|---|
 | 0x78-0x7C | Page mapper | See "Memory". |
-| 0x80 | UM245R | USB data: read takes a byte from the receive FIFO, write puts one in the transmit FIFO |
-| 0x81 | UM245R | USB status (read only): bit 0 = RXF# (0: a byte is waiting), bit 1 = TXE# (0: room to send); bits 2-7 are not driven |
+| 0x80 | FT245RL | USB data: read takes a byte from the receive FIFO, write puts one in the transmit FIFO |
+| 0x81 | FT245RL | USB status (read only): bit 0 = RXF# (0: a byte is waiting), bit 1 = TXE# (0: room to send); bits 2-7 are not driven |
 | 0x98 | TMS9918A | VRAM data |
 | 0x99 | TMS9918A | Control: register write and VRAM address (write), status (read) |
 | 0xA0 | AY-3-8910/8912 | Register select |
@@ -118,7 +119,8 @@ Choice: **a PS/2 PC keyboard, read by an ATmega328P that presents the MSX key ma
 
 - The program writes a row number (0 to 10) to port 0xAA and reads that row's 8 keys from port 0xA9, with 0 meaning pressed. Every key has its own bit, so a game can see several keys held at once. A keyboard that only sends the last character cannot do this.
 - Row 8 holds space and the arrow keys (bit 0 space, bit 4 left, bit 5 up, bit 6 down, bit 7 right), so ZL's `key` command keeps working.
-- Wiring: 8255 PC0-PC3 (row select) go to ATmega PC0-PC3; ATmega PD0-PD7 drive the 8255 PB0-PB7 (columns); the PS/2 clock and data go to ATmega PB0 and PB1 with 4.7 kohm pull-ups. The ATmega runs on its internal 8 MHz oscillator and has its own ISP header.
+- Wiring: 8255 PC0-PC3 (row select) go to ATmega PC0-PC3; ATmega PD0-PD7 drive the 8255 PB0-PB7 (columns); the PS/2 clock and data go to ATmega PB0 and PB1 with 4.7 kohm pull-ups. The ATmega (ATmega328P-AU, TQFP-32) runs on its internal 8 MHz oscillator and has its own ISP header.
+- The PS/2 socket is a panel-mount 6-pin mini-DIN on a short cable to header J6: 1 = +5 V (DIN pin 4), 2 = clock (DIN 5), 3 = data (DIN 1), 4 = GND (DIN 3 and the shell). KiCad has no mini-DIN footprint, and a cable keeps the board small.
 - The ATmega firmware is not written yet. It must change the column lines within a few microseconds of a row change, because an `OUT` followed by an `IN` at 3.58 MHz leaves little time.
 - A USB keyboard works only if it also speaks PS/2 (then a passive USB-to-PS/2 adapter is enough). Otherwise it would need a USB host converter.
 - The emulator maps the PC keyboard to the same matrix.
@@ -136,27 +138,39 @@ Choice: **a PS/2 PC keyboard, read by an ATmega328P that presents the MSX key ma
 
 ## SCART
 
-SCART carries video, stereo audio and an "AV on" signal on one cable.
+SCART carries video, stereo audio and an "AV on" signal on one cable. The board has no SCART socket (it is large, and KiCad has no footprint for it): header J2 takes a short cable to a SCART plug.
+
+| J2 pin | Signal | SCART pin |
+|---|---|---|
+| 1 | Composite video | 20 |
+| 2 | GND | 17 |
+| 3 | Audio left | 6 |
+| 4 | Audio right | 2 |
+| 5 | GND | 4 |
+| 6 | 12 V through 1 kohm (AV switch) | 8 |
+| 7 | Blanking, 75 ohm to GND | 16 |
+| 8 | GND | 18, 21 |
+| 9 | EXTVDP (VDP external video input) | not used |
+| 10 | +5 V | not used |
 
 | SCART pin | Signal | Source |
 |---|---|---|
-| 20 | Composite video in | TMS9918A COMVID through a 2N4401 emitter follower |
-| 16 | Blanking: 0-0.4 V = composite | 75 ohm to GND (an RGB board can drive it later) |
+| 20 | Composite video in | TMS9918A COMVID through an MMBT4401 emitter follower |
+| 16 | Blanking: 0-0.4 V = composite | 75 ohm to GND |
 | 8 | Function switch: 9.5-12 V = 4:3 (4.5-7 V would mean 16:9) | 12 V through 1 kohm |
 | 6 | Audio left in | AY mix |
 | 2 | Audio right in | AY mix |
-| 15, 11, 7 | Red, green, blue | RGB header J3, for a later RGB board |
 | 4, 5, 9, 13, 14, 17, 18, 21 | Grounds | |
 
-- **Video stage** (jblang/TMS9918A): COMVID, 130 ohm to the base of a 2N4401, 470 ohm from the base to GND; the collector to +5 V through a ferrite bead with 100 nF to GND; the emitter drives SCART pin 20 with 75 ohm to GND. jblang notes that 0 ohm instead of 130 ohm gives a level above the NTSC spec; a larger value gives a dimmer picture.
-- **Colour:** the TMS9918A sends NTSC. Most European SCART TVs made since about 2000 show NTSC 60 Hz, but it is worth testing the TV first. For RGB, a later board can take the TMS9928A's Y, R-Y and B-Y outputs to the RGB header J3.
+- **Video stage** (jblang/TMS9918A): COMVID, 130 ohm to the base of an MMBT4401 (SOT-23: 1 base, 2 emitter, 3 collector), 470 ohm from the base to GND; the collector to +5 V through a ferrite bead with 100 nF to GND; the emitter drives SCART pin 20 with 75 ohm to GND. jblang notes that 0 ohm instead of 130 ohm gives a level above the NTSC spec; a larger value gives a dimmer picture.
+- **Colour:** the TMS9918A sends NTSC. Most European SCART TVs made since about 2000 show NTSC 60 Hz, but it is worth testing the TV first. RGB would need a TMS9928A and a converter: a later version.
 - **Audio mix:** each AY output has a 3 kohm load to GND. The left mix is A through 1 kohm and B through 2.2 kohm; the right mix is C through 1 kohm and B through 2.2 kohm. Each mix goes through 10 uF to the SCART input, with 47 kohm to GND.
 
 ## Power
 
 - 12 V DC input (barrel jack), through a 1N5819 against reverse polarity.
-- An R-78E5.0-1.0 switching regulator (pin-compatible with a 7805, without its heat) makes 5 V. 12 V also goes to SCART pin 8.
-- DS1813-5 reset supervisor (pin 1 /RST, 2 VCC, 3 GND) with a push button to GND, a 10 kohm pull-up on /RESET, and a power LED.
+- An R-78E5.0-1.0 switching regulator (SIP-3, pin-compatible with a 7805, without its heat) makes 5 V. 12 V also goes to SCART pin 8 through J2. The reverse-polarity diode is a 1N5819HW (SOD-123).
+- DS1813R-5 reset supervisor (SOT-23: pin 1 /RST open drain with a 5.5 kohm internal pull-up, 2 VCC, 3 GND) with a push button to GND, a 10 kohm pull-up on /RESET, and a power LED.
 - 100 nF next to the supply pins of every chip, 100 uF on 12 V and on 5 V.
 
 ## Software on the board
@@ -236,15 +250,19 @@ The existing display modules (OLED, TFT, Nokia, MC6845, MC6847) stay as fantasy 
 - Every pin in `hardware/kicad/zl80-netlist.txt` against the datasheets. The pin tables were checked against datasheets and two open designs (jblang/TMS9918A and electrified/rc2014-ym2149), but no board has been built from this schematic.
 - The VRAM latch timing at this board's clock. jblang's circuit runs on an RC2014 with the same VDP and crystal.
 - The video level on the TV (the 130 ohm base resistor) and whether the TV shows NTSC colour.
-- The 74HCT670 page mapper against the Zeta SBC v2 schematic.
+- The 74HC670 page mapper against the Zeta SBC v2 schematic.
 - The SCART pin numbers against a SCART pinout sheet before connecting a TV (only one source was used).
 - DB9 pin 7: +5 V on Atari joysticks is not confirmed. It goes to +5 V through 1 kohm, which also holds a Mega Drive pad's select line high (B on pin 6, C on pin 9).
-- The DS1813 pin order against its TO-92 footprint.
+- JLCPCB stock for every part, especially the CD74HC670M96 (little stock) and the GCT USB4105-GF-A (LCSC C3020560).
+- The SOP-28 land pattern (KiCad SOP-28_8.4x18.16mm) against the AS6C62256 330 mil drawing.
+- The USB4105 footprint has 0.19 mm between its plastic pegs' holes and the GND pads; the board rules allow 0.15 mm hole clearance for it. Ask the board maker if that is fine.
 - The AS6C4008 part suffix (5 V part, not the 3.3 V "A" version).
 - For an AY-3-8912 board: its 28-pin pinout (1 C, 2 TEST1, 3 VCC, 4 B, 5 A, 6 GND, IOA7-IOA0 on 7-14, 15 CLOCK, 16 /RESET, 17 A8, 18 BDIR, 19 BC2, 20 BC1, DA7-DA0 on 21-28), and that register 15 reads back as the emulator assumes.
 - That the ATmega firmware answers a row change before the Z80 reads the row.
 
 ## Schematic
 
-`hardware/kicad/` holds the KiCad schematic of this board (`zl80.kicad_sch`, KiCad 7 format; KiCad 8 and 9 open it). It is generated by `gen_schematic.py`; edit that file and run it again rather than editing the schematic by hand. `check_schematic.py` checks that the file parses and that no pin is left floating, and `zl80-netlist.txt` lists every net with its pins.
+`hardware/kicad/` holds the KiCad schematic and PCB of this board (`zl80.kicad_sch`, KiCad 7 format; KiCad 8 and 9 open it). It is generated by `gen_schematic.py`; edit that file and run it again rather than editing the schematic by hand. `check_schematic.py` checks that the file parses and that no pin is left floating, and `zl80-netlist.txt` lists every net with its pins.
+
+The PCB is 138 x 105 mm with 4 layers: tracks on the top, the second inner layer (In2) and the bottom; the first inner layer (In1) is an unbroken GND plane; +5V runs as 0.4 mm tracks with a +5V fill on In2. All surface-mount parts are on the top side. It was routed with Freerouting and passes KiCad's DRC and schematic parity check. Rules: 0.15 mm clearance, 0.2 mm tracks, 0.6/0.3 mm vias.
 
