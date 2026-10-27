@@ -45,6 +45,10 @@ table{border-collapse:collapse;font-size:13px}td{padding:2px 10px 2px 0;vertical
  <select id="ex" aria-label="Example program"></select>
  <select id="dsp" aria-label="Display module"></select>
 </div>
+<div class="row" id="hwrow" hidden>
+ <button id="rom" title="512 KB flash image for an EEPROM programmer: kernel in page 0, this program in pages 1-2">ROM .bin</button><button id="hexb" title="This program as Intel HEX at 4000h, for the serial loader">HEX</button><button id="usb" title="Send this program to a ZL-80 board on a USB serial port (Web Serial, Chrome or Edge)">Send to board</button><button id="emus" title="Send this program to the emulated board through its serial port, the same way">Send to emulator</button>
+ <pre id="ser" style="flex-basis:100%;margin:0"></pre>
+</div>
 <textarea id="src" spellcheck="false" aria-label="ZL source code"></textarea>
 
 <details><summary>Language reference</summary>
@@ -2028,23 +2032,26 @@ function step(){
 
 /* ZL-80 board (docs/hardware.md). Z80 at 3.58 MHz; 512 KB flash (pages 0-31) and 512 KB RAM (pages 32-63) behind four 16 KB
    page registers; TMS9928A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; 68B50 on 0x80/0x81.
-   Kernel RAM: 0xFF00 ARGX, 0xFF01 ARGY, 0xFF02 last VDP status, 0xFF03 random seed, 0xFF10-0xFF17 copies of VDP registers R0-R7. */
-const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_VRS=0xFF10;
+   Kernel RAM: 0xFF00 ARGX, 0xFF01 ARGY, 0xFF02 last VDP status, 0xFF03 random seed, 0xFF05/0xFF06 loader record type and error,
+   0xFF10-0xFF17 copies of VDP registers R0-R7. */
+const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_TYPE=0xFF05,K_ERR=0xFF06,K_VRS=0xFF10,CHAR_T=311; // CHAR_T: one serial byte (10 bits at 115200) in T-states
 let KER=null;
 // kernel ROM, flash page 0: start-up, interrupt handler and the routines compiled ZL calls; tables from 0x3000
 function buildKernel(){
  const k=new Uint8Array(0x4000).fill(0xFF),s={},fix=[];let p=0;
  const b=(...v)=>{for(const x of v)k[p++]=x&255},nn=v=>b(v&255,v>>8),lab=n=>{s[n]=p};
  const w=n=>{fix.push([p,n,0]);p+=2},r=n=>{fix.push([p,n,1]);p++}; // label address, JR/DJNZ displacement
- // reset: paging is off, so flash page 0 shows in every bank
- b(0xF3);                                                                  // DI
- [[0x78,0],[0x79,32],[0x7A,33],[0x7B,34],[0x7C,1]].forEach(([port,v])=>b(0x3E,v,0xD3,port)); // flash 0, RAM 32 33 34, paging on
- b(0xC3);w("START");
+ const map=()=>[[0x78,0],[0x79,32],[0x7A,33],[0x7B,34],[0x7C,1]].forEach(([port,v])=>b(0x3E,v,0xD3,port)); // flash 0, RAM 32 33 34, paging on
+ // reset: paging is off, so flash page 0 shows in every bank. I = 0 marks a cold start; the serial loader sets I = 1
+ b(0xF3,0xAF,0xED,0x47);map();b(0xC3);w("START");                          // DI; LD I,A (0)
  p=0x38;lab("ISR");                                                        // IM 1: once per frame
- b(0xF5,0xDB,0x99,0x32);nn(K_STAT);b(0xF1,0xFB,0xED,0x4D);                 // PUSH AF; IN A,(99h) clears the interrupt; LD (stat),A; POP AF; EI; RETI
+ b(0xF5,0xDB,0x99,0x32);nn(K_STAT);                                        // PUSH AF; IN A,(99h) clears the interrupt; LD (stat),A
+ b(0xDB,0x80,0x0F,0x30);r("isr1");b(0xDB,0x81,0xFE,0x03,0xCA);w("LOADER");// a 03h (Ctrl-C) on the serial port starts the loader
+ lab("isr1");b(0xF1,0xFB,0xED,0x4D);                                       // POP AF; EI; RETI
  lab("START");
  b(0x21);nn(0xC000);b(0x11);nn(0xC001);b(0x01);nn(0x3FFF);b(0x36,0,0xED,0xB0); // RAM 0xC000-0xFFFF = 0 (variables start at 0)
  b(0x31);nn(0xFF00);b(0xED,0x56);                                         // LD SP,FF00h; IM 1
+ b(0xED,0x57,0xB7,0x20);r("warm1");b(0x3E,0x03,0xD3,0x80,0x3E,0x16,0xD3,0x80);lab("warm1"); // cold start: 68B50 reset, then 8N1 at 7.3728 MHz / 64 = 115200
  b(0x3E,0x82,0xD3,0xAB,0x3E,0x08,0xD3,0xAA);                               // 8255: A out, B in, C out; keyboard row 8
  b(0x3E,7,0xD3,0xA0,0x3E,0xBF,0xD3,0xA1);                                  // AY R7: sound off, port A in (joysticks), port B out
  b(0x21);w("VINIT");b(0x11);nn(K_VRS);b(0x01);nn(8);b(0xED,0xB0);          // RAM copies of R0-R7
@@ -2055,12 +2062,13 @@ function buildKernel(){
  b(0xAF,0xD3,0x99,0x3E,0x5B,0xD3,0x99,0x3E,0xD0,0xD3,0x98);               // sprite table 1B00h: D0h ends the list
  b(0x21);nn(0xACE1);b(0x22);nn(K_SEED);
  b(0x3E,0xE0,0x32);nn(K_VRS+1);b(0xD3,0x99,0x3E,0x81,0xD3,0x99);           // R1 = E0h: display on, frame interrupt on
+ b(0xED,0x57,0xB7,0x20);r("run");                                          // warm start: the loader already put the program in RAM
  b(0x3E,1,0xD3,0x7A,0x3A);nn(0x8000);b(0xFE,0xFF,0x28);r("noprog");       // flash page 1 in bank 2; erased flash (FFh) means no program
  b(0x21);nn(0x8000);b(0x11);nn(0x4000);b(0x01);nn(0x4000);b(0xED,0xB0);   // flash 1 -> RAM 32 (0x4000)
  b(0x3E,33,0xD3,0x79,0x3E,2,0xD3,0x7A);                                    // bank 1 = RAM 33, bank 2 = flash 2
  b(0x21);nn(0x8000);b(0x11);nn(0x4000);b(0x01);nn(0x4000);b(0xED,0xB0);   // flash 2 -> RAM 33
- b(0x3E,32,0xD3,0x79,0x3E,33,0xD3,0x7A,0xFB,0xC3);nn(0x4000);             // RAM 32 and 33 back in banks 1 and 2; EI; run the program
- lab("noprog");b(0x3E,33,0xD3,0x7A,0xFB);lab("idle");b(0x76,0x18);r("idle");
+ lab("run");b(0x3E,32,0xD3,0x79,0x3E,33,0xD3,0x7A,0xFB,0xC3);nn(0x4000);  // RAM 32 and 33 back in banks 1 and 2; EI; run the program
+ lab("noprog");b(0x3E,33,0xD3,0x7A,0xFB);lab("idle");b(0x76,0x18);r("idle"); // wait for a program on the serial port
  lab("VINIT");b(0x02,0x80,0x06,0xFF,0x03,0x36,0x07,0x01);                  // Graphics II, 16 KB, display off; tables as in the TMS9918A fantasy mode
  // VRAM writes stay at least 8 us (29 T-states) apart, as the TMS9918A needs during the active display
  lab("VFILL");b(0x7C,0xD3,0x98,0x1B,0x7A,0xB3,0x20);r("VFILL");b(0xC9);    // H = value, DE = count: 41 T per byte
@@ -2107,6 +2115,26 @@ function buildKernel(){
  lab("VWR");b(0xD3,0x98,0xC9);lab("VRD");b(0xDB,0x98,0xC9);
  lab("VFONT");b(0x3A);nn(K_VRS+4);b(0xE6,0x07,0x07,0x07,0x07,0x3C,0xF6,0x40,0x47,0xF3,0xAF,0xD3,0x99,0x78,0xD3,0x99,0xFB);
  b(0x21);nn(0x3300);b(0x11);nn(512);lab("vf");b(0x7E,0xD3,0x98,0x23,0x1B,0x7A,0xB3,0x20);r("vf");b(0xC9); // characters 32-95
+ // serial loader: Intel HEX records at 115200 baud. It answers > when ready, . for each good record, ! for a bad checksum
+ // or an address outside 4000h-BFFFh, and * for the end record; then it starts the program warm (I = 1)
+ lab("LOADER");b(0xF3,0x31);nn(0xFF00);map();
+ lab("lprompt");b(0x3E,0x3E,0xCD);w("PUTC");
+ lab("lrec");b(0xCD);w("GETC");b(0xFE,0x03,0x28);r("lprompt");b(0xFE,0x3A,0x20);r("lrec"); // Ctrl-C: prompt again; wait for ':'
+ b(0xAF,0x32);nn(K_ERR);b(0x4F,0xCD);w("GETHEX");b(0x47);                  // C = checksum; B = length
+ b(0xCD);w("GETHEX");b(0x57,0xCD);w("GETHEX");b(0x5F,0xCD);w("GETHEX");b(0x32);nn(K_TYPE); // DE = address; record type
+ b(0x78,0xB7,0x28);r("lsum");
+ lab("ldat");b(0xCD);w("GETHEX");b(0x67,0x3A);nn(K_TYPE);b(0xB7,0x20);r("lnext"); // H = data byte; only type 00 stores it
+ b(0x7A,0xFE,0x40,0x38);r("lerr");b(0xFE,0xC0,0x30);r("lerr");b(0x7C,0x12,0x18);r("lnext");
+ lab("lerr");b(0x3E,1,0x32);nn(K_ERR);
+ lab("lnext");b(0x13,0x10);r("ldat");
+ lab("lsum");b(0xCD);w("GETHEX");b(0x79,0xB7,0x20);r("lbad");b(0x3A);nn(K_ERR);b(0xB7,0x20);r("lbad"); // the sum of all bytes must be 0
+ b(0x3A);nn(K_TYPE);b(0xFE,0x01,0x28);r("leof");b(0x3E,0x2E,0xCD);w("PUTC");b(0x18);r("lrec");
+ lab("lbad");b(0x3E,0x21,0xCD);w("PUTC");b(0x18);r("lrec");
+ lab("leof");b(0x3E,0x2A,0xCD);w("PUTC");b(0x3E,1,0xED,0x47,0xC3);w("START");
+ lab("PUTC");b(0xF5);lab("pw");b(0xDB,0x80,0xE6,0x02,0x28);r("pw");b(0xF1,0xD3,0x81,0xC9); // wait until the 68B50 can take a byte
+ lab("GETC");b(0xDB,0x80,0x0F,0x30);r("GETC");b(0xDB,0x81,0xC9);
+ lab("GETNIB");b(0xCD);w("GETC");b(0xD6,0x30,0xFE,0x0A,0xD8,0xD6,0x07,0xE6,0x0F,0xC9); // hex digit (either case) -> 0-15
+ lab("GETHEX");b(0xCD);w("GETNIB");b(0x07,0x07,0x07,0x07,0x6F,0xCD);w("GETNIB");b(0xB5,0x6F,0x81,0x4F,0x7D,0xC9); // byte; C += byte
  if(p>0x3000)throw Error("kernel code too big");
  for(const [q,n,rel] of fix){const t=s[n];if(rel){const d=t-(q+1);if(d<-128||d>127)throw Error("jump out of range: "+n);k[q]=d&255}else{k[q]=t&255;k[q+1]=t>>8}}
  k.set(ROM,0x3000);                                                         // 3x5 font and seven-segment table, as at 0x7000 in fantasy mode
@@ -2115,7 +2143,10 @@ function buildKernel(){
  for(let n=0;n<256;n++){const bp=per(110+n*12),np=per(440*Math.pow(2,(n-69)/12));k[0x3500+n*2]=bp&255;k[0x3501+n*2]=bp>>8;k[0x3700+n*2]=np&255;k[0x3701+n*2]=np>>8}
  return {rom:k,s}}
 const phys=new Uint8Array(0x100000),pgReg=new Uint8Array(4),bankOff=new Int32Array(4),kbm=new Uint8Array(11);
-let pgOn=0,ppiA=0,ppiC=0,hwF0=0,vLast=-1e9,hwIdle=0,serialOut="";
+let pgOn=0,ppiA=0,ppiC=0,hwF0=0,vLast=-1e9,hwIdle=0;
+// 68B50 at 115200 baud: a received byte waits in RDR until read; one that arrives before that is lost (overrun)
+const acia={rx:[],rdr:0,rdrf:0,ovr:0,rxT:0,txT:0,out:[]};
+function aciaTick(){if(acia.rx.length&&cpu.cyc>=acia.rxT){const v=acia.rx.shift();if(acia.rdrf)acia.ovr=1;else{acia.rdr=v;acia.rdrf=1}acia.rxT=cpu.cyc+CHAR_T}}
 function remap(){for(let i=0;i<4;i++)bankOff[i]=(pgOn?pgReg[i]&63:0)<<14}
 const hwCpu=Z80({rd:a=>phys[bankOff[a>>14]|a&0x3FFF],wr:(a,v)=>{const o=bankOff[a>>14];if(o>=0x80000)phys[o|a&0x3FFF]=v},in:p=>hwIn(p&255),out:(p,v)=>hwOut(p&255,v)});
 function hwFault(m){if(!bad)bad=m+" (PC 0x"+hx(cpu.pc,4)+")"}
@@ -2126,8 +2157,8 @@ function vdpAccess(){ // the TMS9918A needs 8 us between VRAM accesses during th
 const joyPort=()=>AYR[15]&0x40?0xFF:~((keys&4?1:0)|(keys&8?2:0)|(keys&1?4:0)|(keys&2?8:0)|(keys&16?16:0))&255;
 function hwIn(p){
  switch(p){
-  case 0x80:return 0x02; // 68B50 status: ready to send, nothing received
-  case 0x81:return 0;
+  case 0x80:return acia.rdrf|(cpu.cyc>=acia.txT?2:0)|(acia.ovr?0x20:0); // 68B50 status: RDRF, TDRE, overrun
+  case 0x81:acia.rdrf=0;acia.ovr=0;return acia.rdr;
   case 0x98:vdpAccess();return tmsRead();
   case 0x99:return tmsStatus();
   case 0xA2:return ayRead();
@@ -2139,8 +2170,8 @@ function hwOut(p,v){
  if(p>=0x78&&p<=0x7B){pgReg[p-0x78]=v&63;remap();return}
  switch(p){
   case 0x7C:pgOn=v&1;remap();return;
-  case 0x80:return;
-  case 0x81:serialOut+=String.fromCharCode(v);return;
+  case 0x80:if((v&3)===3){acia.rdrf=0;acia.ovr=0}return; // control; 03h is the master reset
+  case 0x81:if(cpu.cyc<acia.txT)hwFault("68B50: a byte was written before the last one was sent");acia.txT=cpu.cyc+CHAR_T;acia.out.push(v);return;
   case 0x98:vdpAccess();ioOut(14,v);return;
   case 0x99:if(vlat>=0&&!(v&0xC0))vdpAccess();ioOut(15,v);return; // setting a read address makes the VDP read ahead
   case 0xA0:aySel=v&15;return;
@@ -2155,10 +2186,11 @@ function bootHW(code){
  for(let i=0x80000;i<0x100000;i++)phys[i]=Math.random()*256|0;        // RAM and VRAM hold random values at power-on
  for(let i=0;i<16384;i++)vram[i]=Math.random()*256|0;
  VR.fill(0);vlat=-1;vad=0;vbuf=0;tmsStat=0;ayReset();pgReg.fill(0);pgOn=0;remap();ppiA=ppiC=0;
- cpu.reset();cpu.cyc=0;hwF0=0;vLast=-1e9;bad=null;serialOut=""}
+ cpu.reset();cpu.cyc=0;hwF0=0;vLast=-1e9;bad=null;acia.rx.length=0;acia.out.length=0;acia.rdrf=acia.ovr=0;acia.rxT=acia.txT=0}
 function hwStep(){
  cpu.irq=!!(VR[1]&0x20&&tmsStat&0x80);
  if(cpu.halted)hwIdle+=4;
+ if(acia.rx.length)aciaTick();
  cpu.step();
  if(cpu.sp<0xF100)hwFault("stack overflow (gosub without return, or goto out of a subroutine)");
  else if(cpu.sp>0xFF00&&cpu.sp<0xFFFF)hwFault("return without gosub")}
@@ -2316,7 +2348,7 @@ function drawCrtc(){
  cx.putImageData(img,0,0)}
 const cv=$("cv"),cx=cv.getContext("2d");
 const PR=PAL.map(h=>[1,3,5].map(o=>parseInt(h.slice(o,o+2),16)));let img=null;
-function setMod(i){MOD=MODS[i];cv.width=MOD.w;cv.height=MOD.h;img=cx.createImageData(MOD.w,MOD.h);cv.style.aspectRatio=MOD.w+" / "+MOD.h;cv.style.width="min(100%,"+(MOD.w>=MOD.h?320:256)+"px)";$("cap").textContent=MOD.c;cpu=MOD.hw?hwCpu:fzCpu;AYCLK=MOD.hw?HWCLK/2:1773400}
+function setMod(i){MOD=MODS[i];cv.width=MOD.w;cv.height=MOD.h;img=cx.createImageData(MOD.w,MOD.h);cv.style.aspectRatio=MOD.w+" / "+MOD.h;cv.style.width="min(100%,"+(MOD.w>=MOD.h?320:256)+"px)";$("cap").textContent=MOD.c;$("hwrow").hidden=!MOD.hw;cpu=MOD.hw?hwCpu:fzCpu;AYCLK=MOD.hw?HWCLK/2:1773400}
 function draw(){if(MOD.crtc){drawCrtc();return}if(MOD.hw||MOD.assist==="tms"){drawTms2();return}if(MOD.assist==="vdg"){drawVdg();return}const d=img.data,{w,h,sw,mono}=MOD;let o=0;for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=mem[0x8000+(y<<sw)+x]&15,c=mono?(v?MOD.on:MOD.off):PR[v];d[o++]=c[0];d[o++]=c[1];d[o++]=c[2];d[o++]=255}cx.putImageData(img,0,0)}
 const hx=(v,w)=>v.toString(16).toUpperCase().padStart(w,"0");
 let timer=null;
@@ -2340,6 +2372,42 @@ function run(){
   timer=setInterval(frame,1000/60);
  }catch(x){$("st").textContent=x.message;$("st").className="err"}}
 $("run").onclick=run;$("stop").onclick=stop;
+
+// ZL-80 board files and the serial loader protocol (see the kernel's LOADER)
+function compileHW(){const m=MOD;MOD=MODS.find(x=>x.hw);try{return compile($("src").value)}finally{MOD=m}}
+function hexLines(code,org){const L=[];for(let i=0;i<code.length;i+=32){const a=org+i,r=[Math.min(32,code.length-i),a>>8,a&255,0,...code.slice(i,i+32)];
+ L.push(":"+r.map(x=>hx(x,2)).join("")+hx(-r.reduce((s,x)=>s+x,0)&255,2))}L.push(":00000001FF");return L}
+function save(name,data){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data],{type:"application/octet-stream"}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
+const slog=m=>{$("ser").textContent=m};
+$("rom").onclick=()=>{try{const code=compileHW(),img=new Uint8Array(0x80000).fill(0xFF);img.set(KER.rom,0);img.set(code,0x4000);save("zl80-flash.bin",img);slog("zl80-flash.bin: 512 KB, kernel in flash page 0, program ("+code.length+" bytes) from page 1")}catch(x){slog(x.message)}};
+$("hexb").onclick=()=>{try{const code=compileHW();save("zl80-program.hex",hexLines(code,0x4000).join("\r\n")+"\r\n");slog("zl80-program.hex: "+code.length+" bytes at 4000h")}catch(x){slog(x.message)}};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function waitFor(port,set,ms){const end=performance.now()+ms;for(;;){const c=port.take();if(c!==undefined){if(set.includes(String.fromCharCode(c)))return String.fromCharCode(c);continue}if(performance.now()>end)return null;await sleep(5)}}
+async function sendProgram(port,code){
+ port.flush();slog("Waking the board (Ctrl-C)...");let ok=false;
+ for(let i=0;i<60&&!ok;i++){await port.write([3]);ok=!!await waitFor(port,">",100)}
+ if(!ok)throw Error("No answer from the board. Is it on, with the kernel running, at 115200 baud?");
+ const L=hexLines(code,0x4000);
+ for(let i=0;i<L.length;i++){
+  await port.write([...L[i]+(i<L.length-1?"\r\n":"")].map(c=>c.charCodeAt(0))); // nothing after the end record: the board is already restarting
+  const want=i===L.length-1?"*":".",c=await waitFor(port,".!*",2000);
+  if(c!==want)throw Error(c==="!"?"The board rejected record "+(i+1)+" (checksum or address).":"No answer after record "+(i+1)+".");
+  slog("Sending: record "+(i+1)+" of "+L.length)}
+ slog("Sent "+code.length+" bytes in "+L.length+" records. The board is running the program.")}
+// the emulated board's 68B50, behind the same small interface as a real port
+const emuPort={write:async b=>{if(!acia.rx.length&&acia.rxT<cpu.cyc)acia.rxT=cpu.cyc+CHAR_T;acia.rx.push(...b)},take:()=>acia.out.shift(),flush:()=>{acia.out.length=0}};
+let usb=null;
+async function usbPort(){
+ if(usb)return usb;
+ if(!navigator.serial)throw Error("This browser has no Web Serial. Use Chrome or Edge on a desktop.");
+ const port=await navigator.serial.requestPort();await port.open({baudRate:115200,dataBits:8,stopBits:1,parity:"none"});
+ const q=[],w=port.writable.getWriter(),r=port.readable.getReader();
+ (async()=>{try{for(;;){const {value,done}=await r.read();if(done)break;q.push(...value)}}catch(x){}usb=null})();
+ return usb={write:b=>w.write(new Uint8Array(b)),take:()=>q.shift(),flush:()=>{q.length=0}}}
+let sending=false;
+async function sendWith(getPort){if(sending)return;sending=true;try{const code=compileHW();await sendProgram(await getPort(),code)}catch(x){slog(x.message)}finally{sending=false}}
+$("usb").onclick=()=>sendWith(usbPort);
+$("emus").onclick=()=>sendWith(async()=>{if(!MOD.hw||!timer)throw Error("Run a program on the ZL-80 board display first; then the emulated board can take a new one.");return emuPort});
 const sel=$("ex");
 Object.keys(EX).forEach(k=>sel.add(new Option(k,k)));
 sel.onchange=()=>{$("src").value=EX[sel.value];const w=EXMOD[sel.value],cur=MODS.indexOf(MOD);if(w){const al=[].concat(w);if(!al.includes(cur)){dsp.value=al[0];setMod(al[0])}}else if(MOD.crtc===1){dsp.value=0;setMod(0)}run()};

@@ -143,9 +143,9 @@ SCART carries RGB, sync, stereo audio and an "AV on" signal on one cable, and Eu
 
 ## Software on the board
 
-- **Kernel (flash page 0):** starts the hardware, then either runs the program stored in flash page 1 (if it has a "ZL" header) or waits for a program on the serial port.
-- **Loading:** the emulator gets a "Send to console" button. It uses Web Serial in Chrome or Edge to send the compiled program over USB serial. The kernel copies it to 0x4000 and runs it.
-- **Saving:** a ROM file (.bin, 512 KB) for an EEPROM programmer, and an Intel HEX file. Later, the kernel can write a received program into flash itself.
+- **Kernel (flash page 0):** starts the hardware, then either runs the program stored in flash pages 1 and 2 or waits for a program on the serial port.
+- **Loading:** in the ZL-80 board display, **Send to board** sends the compiled program over a USB serial adapter (Web Serial, Chrome or Edge on a desktop). The kernel's serial loader writes it to RAM at 0x4000 and runs it. This works while another program is running. **Send to emulator** does the same into the emulated board.
+- **Saving:** **ROM .bin** saves a 512 KB flash image (kernel in page 0, the program from page 1) for an EEPROM programmer. **HEX** saves the program as Intel HEX at 0x4000, which a terminal program can also send to the loader. Later, the kernel can write a received program into flash itself.
 
 ## Kernel
 
@@ -155,11 +155,25 @@ The kernel is built by `buildKernel()` in `index.html` and fills flash page 0. O
 2. Clears RAM 0xC000-0xFFFF (RAM holds random values at power-on, and ZL variables start at 0), sets the stack to 0xFF00 and IM 1.
 3. Sets up the 8255 (control word 0x82) and the AY mixer (R7 = 0xBF).
 4. Writes R0-R7 of the VDP with the display off, clears the 16 KB of VRAM, writes the name table (0-255 three times), the colour table (0xF1) and ends the sprite list (0xD0 at 0x1B00). Then it turns on the display and the frame interrupt (R1 = 0xE0). VDP registers cannot be read back, so the kernel keeps copies at 0xFF10-0xFF17.
-5. Copies the program from flash pages 1 and 2 to RAM at 0x4000 and runs it. If flash page 1 is erased (first byte 0xFF), it waits.
+5. Copies the program from flash pages 1 and 2 to RAM at 0x4000 and runs it. If flash page 1 is erased (first byte 0xFF), it waits for a program on the serial port.
+
+On a cold start (I register = 0) it also resets the 68B50 and sets it to 8N1 at 115200 baud (7.3728 MHz / 64). After the serial loader it starts warm (I = 1): the same steps without the 68B50 reset and without the copy from flash.
 
 This takes about 34 frames (0.6 s).
 
-The interrupt handler at 0x0038 reads the VDP status (which clears the interrupt) and keeps it at 0xFF02 for `vstat`.
+The interrupt handler at 0x0038 reads the VDP status (which clears the interrupt) and keeps it at 0xFF02 for `vstat`. It also looks at the 68B50: a received 0x03 (Ctrl-C) starts the serial loader, any other byte is dropped.
+
+### Serial loader
+
+The loader takes Intel HEX records over the 68B50 and answers each one with a single character:
+
+| Sent | Board answers |
+|---|---|
+| 0x03 (Ctrl-C) | `>` ready, now in the loader (also sent again on each later 0x03) |
+| a data record (type 00) | `.` stored, or `!` if the checksum is wrong or an address is outside 0x4000-0xBFFF |
+| the end record `:00000001FF` | `*`, then a warm start that runs the program |
+
+Other characters between records (CR, LF, spaces) are ignored, and hex digits can be upper or lower case. The sender waits for the answer to each record before sending the next. This is the flow control: the 68B50 holds one received byte, and the loader keeps up with 115200 baud inside a record, but not with a whole file sent without pauses. The browser sends 32 data bytes per record and nothing after the end record. The board's answer to the end record comes before its restart.
 
 Compiled ZL calls kernel routines for everything that touches a chip. Arguments go in 0xFF00 (ARGX), 0xFF01 (ARGY) and A:
 
@@ -186,13 +200,14 @@ The display list in `index.html` has "ZL-80 board (real hardware)". In that mode
 
 - The Z80 runs 59,736 T-states per frame. The frame interrupt comes at line 192 (T-state 43,776), when the picture is finished.
 - Memory goes through the page mapper: 512 KB flash (cannot be written) and 512 KB RAM, which starts with random values.
-- Only the ports in the I/O table work. Any other port stops the program with an error. The 68B50 accepts output but has no input yet.
+- Only the ports in the I/O table work. Any other port stops the program with an error.
+- The 68B50 sends and receives one byte per 311 T-states (10 bits at 115200 baud). A byte that arrives before the last one was read is lost and sets the overrun bit, as on the real chip. Writing a byte before the last one was sent stops the program.
 - The PC keyboard is the MSX matrix (keys by position), and the on-screen pad and the arrow keys are joystick 1.
 - The emulator also stops on VRAM accesses that are too fast, a stack overflow, and `return` without `gosub`.
 
 Still to do:
 
-1. ROM and HEX download, and "Send to console" over Web Serial, with a serial loader in the kernel.
+1. Try **Send to board** with a real board and USB serial adapter. It is tested only against the emulated 68B50 so far.
 2. Writing programs into flash from the console.
 3. A `bank` command for the extra RAM and flash pages.
 
