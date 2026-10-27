@@ -63,4 +63,4 @@ Other files: `cpc464/catch.bas` (a BASIC game for the Amstrad CPC464) and `docs/
 
 Pick **ZL-80 board (real hardware)** in the display list to run a program on an exact copy of that board: Z80 at 3.58 MHz, paged memory, a kernel ROM, only the real I/O ports, and the frame interrupt. A program that runs there is meant to run on the real board unchanged.
 
-In that display, **ROM .bin** saves a 512 KB flash image for an EEPROM programmer and **HEX** saves the program as Intel HEX. **Send to board** sends the program to a real board over a USB serial adapter (Web Serial, Chrome or Edge), and **Send to emulator** sends it the same way to the emulated board. The real-board path has not been tried on hardware yet.
+In that display, **ROM .bin** saves a 512 KB flash image for an EEPROM programmer and **HEX** saves the program as Intel HEX. **Send to board** sends the program to a real board over its USB port (Web Serial, Chrome or Edge), and **Send to emulator** sends it the same way to the emulated board. The real-board path has not been tried on hardware yet.

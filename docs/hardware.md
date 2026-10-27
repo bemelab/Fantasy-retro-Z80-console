@@ -21,7 +21,7 @@ Status: design. Nothing here is built or tested yet. The schematic is in `hardwa
    A B C ----> stereo mix --> SCART audio L/R      |
    port A <--- 2 joysticks (DB9)                   |
  8255 PPI <--- ATmega328P <--- PS/2 PC keyboard    |
- 68B50 ACIA <-- USB serial <-- PC / browser -------+
+ UM245R USB FIFO <-- USB <-- PC / browser ---------+
 ```
 
 ## Main parts
@@ -36,16 +36,15 @@ Status: design. Nothing here is built or tested yet. The schematic is in `hardwa
 | RAM | 512 KB SRAM, AS6C4008-55PCN (DIP-32) | The largest common 5 V SRAM in DIP. Its pins 3, 29 and 31 differ from the flash, so the sockets are not interchangeable. The "AS6C4008A" is 3.3 V only. |
 | Keyboard | PS/2 PC keyboard, ATmega328P, 8255 PPI | See "Keyboard". |
 | Joysticks | 2 x DB9 (Atari/Sega pinout), two 74HCT157 | Same wiring idea as MSX. |
-| Serial | 68B50 ACIA, 115200 baud, 7.3728 MHz oscillator | Loads programs from a PC or straight from the browser (Web Serial). |
+| USB | UM245R module (FTDI FT245R USB FIFO, 24-pin DIP footprint) | Loads programs from a PC or straight from the browser (Web Serial): the PC sees a serial port. 256-byte receive and 128-byte transmit FIFOs; when the receive FIFO is full the PC waits, so no byte is lost. Up to about 1 MB/s. |
 | TV | SCART: composite video, stereo audio, 4:3 switching | See "SCART". |
-| Glue | 74HCT138 x2, 74HCT32 x2, 74HCT02, 74HCT04, 74HCT74, 74HCT670 x2 | See "Address decoding". HCT parts accept the TTL-level outputs of the NMOS TMS9918A and AY-3-8910. |
+| Glue | 74HCT138 x2, 74HCT32 x3, 74HCT02, 74HCT04, 74HCT74, 74HCT125, 74HCT670 x2 | See "Address decoding". HCT parts accept the TTL-level outputs of the NMOS TMS9918A and AY-3-8910. |
 
 ## Clocks and timing
 
 - VDP crystal: 10.738635 MHz between XTAL1 and XTAL2, with 22 pF to ground on each side (TI gives 15-39 pF; jblang uses 16 pF).
 - Z80: CPUCLK = 10.738635 / 3 = **3.579545 MHz**, through one 74HCT04 gate.
 - AY: CPUCLK / 2 = **1.789773 MHz** from the second half of the 74HCT74.
-- Serial: a 7.3728 MHz oscillator on the 68B50 TxCLK and RxCLK; the 68B50 divides by 64 for 115200 baud.
 - Frame: 262 lines x 342 pixel clocks, **59.92 frames per second**. The Z80 runs at 2/3 of the pixel clock, so a frame is exactly **59,736 Z80 T-states**.
 
 ## Memory
@@ -77,10 +76,11 @@ All decoding uses HCT logic.
 - **Memory:** two 74HCT670 hold a 6-bit page number for each bank. Their read address is A14 and A15 (the bank). The outputs PA14-PA19 go to address lines A14-A18 of both memory chips, and PA19 chooses the chip: 0 = flash, 1 = RAM. Flash /CE = /MREQ OR PA19; RAM /CE = /MREQ OR NOT PA19.
 - **Paging off at reset:** a 74HCT74 flip-flop (cleared by /RESET) drives the 670 output enables. With paging off the outputs float, and six 10 kohm pull-downs make PA14-PA19 read 0: flash page 0 in every bank.
 - **Flash writes:** flash /WE goes through jumper JP1 from /WR. With JP1 open, nothing can write the flash. With it closed the flash still needs its unlock sequence.
-- **I/O:** IOSEL = /IORQ OR M1, so interrupt-acknowledge cycles select nothing. One 74HCT138 (A7 = 1, A6 = 0) gives 80h-87h (68B50), 98h-9Fh (VDP), A0h-A7h (AY) and A8h-AFh (8255). A second 74HCT138 (A7 = 0, A6 = 1) gives 78h-7Fh for the page registers (A2 = 0) and the paging flip-flop (A2 = 1).
+- **I/O:** IOSEL = /IORQ OR M1, so interrupt-acknowledge cycles select nothing. One 74HCT138 (A7 = 1, A6 = 0) gives 80h-87h (USB FIFO), 98h-9Fh (VDP), A0h-A7h (AY) and A8h-AFh (8255). A second 74HCT138 (A7 = 0, A6 = 1) gives 78h-7Fh for the page registers (A2 = 0) and the paging flip-flop (A2 = 1).
 - **VDP:** /CSW = VDPSEL OR /WR, /CSR = VDPSEL OR /RD, MODE = A0. CD0 is the VDP's most significant bit, so CD0-CD7 go to D7-D0.
 - **AY:** BC2 = A8 = +5 V, /A9 = GND. BDIR = NOR(AYSEL, /WR) and BC1 = NOR(AYSEL, A0): A0h write = latch address, A1h write = write data, A2h read = read data.
-- **68B50:** CS0 = CS1 = +5 V, /CS2 = its decoder output, RS = A0, R/W = /WR, E = NOT /IORQ. /CTS and /DCD are grounded; /IRQ is not used.
+- **USB FIFO (UM245R):** RD# = USBSEL OR /RD OR A0 (port 80h read); WR = NOR(USBSEL OR /WR, A0) (port 80h write; the FT245R latches the byte when WR falls); a 74HCT125 puts RXF# on D0 and TXE# on D1 when port 81h is read (USBSEL OR /RD OR NOT A0). The FT245R timing (RD# and WR pulses of at least 50 ns, data valid 50 ns after RD#) is well inside a Z80 I/O cycle.
+- **UM245R power (self powered, DS_UM245R section 7.2):** jumper J2 open, the board's 5 V on VCC (pins 15 and 21), jumper J1 on pins 2-3 so VIO = VCC = 5 V logic. Pin 14 (USB 5 V) goes to PU2 (pin 16) and PU1 (pin 17) to RST# (pin 20), so the FT245R stays in reset while the PC is off. FTDI also recommends setting the power descriptor in its EEPROM to self powered (FT_PROG).
 - **8255:** RESET (active high) = NOT /RESET.
 - **Interrupt:** the VDP /INT reaches the Z80 /INT through a BAT85 Schottky diode (cathode at the VDP) with a 10 kohm pull-up, as on jblang's board, so other sources can be added later.
 
@@ -91,8 +91,8 @@ The Z80 decodes the low 8 address bits for I/O. The video, sound and keyboard po
 | Port | Device | Use |
 |---|---|---|
 | 0x78-0x7C | Page mapper | See "Memory". |
-| 0x80 | 68B50 ACIA | Control (write), status (read) |
-| 0x81 | 68B50 ACIA | Data |
+| 0x80 | UM245R | USB data: read takes a byte from the receive FIFO, write puts one in the transmit FIFO |
+| 0x81 | UM245R | USB status (read only): bit 0 = RXF# (0: a byte is waiting), bit 1 = TXE# (0: room to send); bits 2-7 are not driven |
 | 0x98 | TMS9918A | VRAM data |
 | 0x99 | TMS9918A | Control: register write and VRAM address (write), status (read) |
 | 0xA0 | AY-3-8910/8912 | Register select |
@@ -162,7 +162,7 @@ SCART carries video, stereo audio and an "AV on" signal on one cable.
 ## Software on the board
 
 - **Kernel (flash page 0):** starts the hardware, then either runs the program stored in flash pages 1 and 2 or waits for a program on the serial port.
-- **Loading:** in the ZL-80 board display, **Send to board** sends the compiled program over a USB serial adapter (Web Serial, Chrome or Edge on a desktop). The kernel's serial loader writes it to RAM at 0x4000 and runs it. This works while another program is running. **Send to emulator** does the same into the emulated board.
+- **Loading:** in the ZL-80 board display, **Send to board** sends the compiled program over the board's USB port (Web Serial, Chrome or Edge on a desktop). The kernel's serial loader writes it to RAM at 0x4000 and runs it. This works while another program is running. **Send to emulator** does the same into the emulated board.
 - **Saving:** **ROM .bin** saves a 512 KB flash image (kernel in page 0, the program from page 1) for an EEPROM programmer. **HEX** saves the program as Intel HEX at 0x4000, which a terminal program can also send to the loader. Later, the kernel can write a received program into flash itself.
 
 ## Kernel
@@ -175,15 +175,15 @@ The kernel is built by `buildKernel()` in `index.html` and fills flash page 0. O
 4. Writes R0-R7 of the VDP with the display off, clears the 16 KB of VRAM, writes the name table (0-255 three times), the colour table (0xF1) and ends the sprite list (0xD0 at 0x1B00). Then it turns on the display and the frame interrupt (R1 = 0xE0). VDP registers cannot be read back, so the kernel keeps copies at 0xFF10-0xFF17.
 5. Copies the program from flash pages 1 and 2 to RAM at 0x4000 and runs it. If flash page 1 is erased (first byte 0xFF), it waits for a program on the serial port.
 
-On a cold start (I register = 0) it also resets the 68B50 and sets it to 8N1 at 115200 baud (7.3728 MHz / 64). After the serial loader it starts warm (I = 1): the same steps without the 68B50 reset and without the copy from flash.
+The FT245R needs no setting up. After the serial loader the kernel starts warm (I register = 1): the same steps without the copy from flash.
 
 This takes about 34 frames (0.6 s).
 
-The interrupt handler at 0x0038 reads the VDP status (which clears the interrupt) and keeps it at 0xFF02 for `vstat`. It also looks at the 68B50: a received 0x03 (Ctrl-C) starts the serial loader, any other byte is dropped.
+The interrupt handler at 0x0038 reads the VDP status (which clears the interrupt) and keeps it at 0xFF02 for `vstat`. It also looks at the USB FIFO: a received 0x03 (Ctrl-C) starts the serial loader, any other byte is dropped.
 
 ### Serial loader
 
-The loader takes Intel HEX records over the 68B50 and answers each one with a single character:
+The loader takes Intel HEX records over the USB FIFO and answers each one with a single character:
 
 | Sent | Board answers |
 |---|---|
@@ -191,7 +191,7 @@ The loader takes Intel HEX records over the 68B50 and answers each one with a si
 | a data record (type 00) | `.` stored, or `!` if the checksum is wrong or an address is outside 0x4000-0xBFFF |
 | the end record `:00000001FF` | `*`, then a warm start that runs the program |
 
-Other characters between records (CR, LF, spaces) are ignored, and hex digits can be upper or lower case. The sender waits for the answer to each record before sending the next. This is the flow control: the 68B50 holds one received byte, and the loader keeps up with 115200 baud inside a record, but not with a whole file sent without pauses. The browser sends 32 data bytes per record and nothing after the end record. The board's answer to the end record comes before its restart.
+Other characters between records (CR, LF, spaces) are ignored, and hex digits can be upper or lower case. The browser still waits for the answer to each record before sending the next, so an error stops the transfer at once; the FT245R's FIFO and USB flow control would also take a whole file sent without pauses (the emulator tests both). The browser sends 32 data bytes per record and nothing after the end record. The board's answer to the end record comes before its restart.
 
 Compiled ZL calls kernel routines for everything that touches a chip. Arguments go in 0xFF00 (ARGX), 0xFF01 (ARGY) and A:
 
@@ -219,13 +219,13 @@ The display list in `index.html` has "ZL-80 board (real hardware)". In that mode
 - The Z80 runs 59,736 T-states per frame. The frame interrupt comes at line 192 (T-state 43,776), when the picture is finished.
 - Memory goes through the page mapper: 512 KB flash (cannot be written) and 512 KB RAM, which starts with random values.
 - Only the ports in the I/O table work. Any other port stops the program with an error.
-- The 68B50 sends and receives one byte per 311 T-states (10 bits at 115200 baud). A byte that arrives before the last one was read is lost and sets the overrun bit, as on the real chip. Writing a byte before the last one was sent stops the program.
+- The USB FIFO holds 256 received bytes and makes the PC wait when it is full, as the FT245R does. Reading port 80h while the FIFO is empty, or writing port 81h, stops the program.
 - The PC keyboard is the MSX matrix (keys by position), and the on-screen pad and the arrow keys are joystick 1.
 - The emulator also stops on VRAM accesses that are too fast, a stack overflow, and `return` without `gosub`.
 
 Still to do:
 
-1. Try **Send to board** with a real board and USB serial adapter. It is tested only against the emulated 68B50 so far.
+1. Try **Send to board** with a real board. It is tested only against the emulated USB FIFO so far.
 2. Writing programs into flash from the console.
 3. A `bank` command for the extra RAM and flash pages.
 

@@ -36,5 +36,5 @@ kicad-cli sch erc --severity-all zl80.kicad_sch
 
 - TMS9918A pins, the VRAM circuit (62256 SRAM, three 74HCT574 latches) and the video output stage: TI's TMS9918A data manual and [jblang/TMS9918A](https://github.com/jblang/TMS9918A).
 - AY-3-8910 pins and bus control: the General Instrument datasheet and [electrified/rc2014-ym2149](https://github.com/electrified/rc2014-ym2149).
-- 68B50 wiring: Grant Searle's Z80 SBC, which the RC2014 serial board follows.
+- UM245R pins, jumpers and self-powered wiring: FTDI's UM245R datasheet (DS_UM245R, FT_000202), sections 4.2 and 7.2.
 - Other chips: the manufacturers' datasheets (Zilog, Microchip, Alliance, Renesas, TI).
