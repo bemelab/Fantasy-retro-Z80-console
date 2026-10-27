@@ -27,7 +27,10 @@ def parse(text):
 
 
 def main():
-    root = parse(open(os.path.join(HERE, "zl80.kicad_sch"), encoding="utf-8").read())
+    text = open(os.path.join(HERE, "zl80.kicad_sch"), encoding="utf-8").read()
+    for t in TOKEN.findall(text):
+        assert not (t.startswith('"') and "\n" in t), "line break inside a string (KiCad rejects it): " + t[:60]
+    root = parse(text)
     assert root[0] == "kicad_sch"
     libs = {s[1]: s for s in next(x for x in root if x[0] == "lib_symbols")[1:]}
     syms = [x for x in root if isinstance(x, list) and x[0] == "symbol"]

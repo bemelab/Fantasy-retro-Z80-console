@@ -15,7 +15,8 @@ def uid(*parts):
 
 
 def q(s):
-    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # KiCad strings stay on one line: a line break is written as \n
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
 def n(v):
