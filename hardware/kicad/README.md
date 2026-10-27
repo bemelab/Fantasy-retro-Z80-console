@@ -4,6 +4,10 @@ The KiCad schematic of the board described in [docs/hardware.md](../../docs/hard
 
 **Not built or tested.** Check every pin against the datasheets before you order a board.
 
+![ZL-80 board, 3D view](../images/pcb-3d-angle.png)
+
+Pictures of every schematic page, the copper layers and the 3D views are in [hardware/images](../images). They are exported with `kicad-cli` (`sch export svg`, `pcb export svg`, `pcb render`); export them again after changing the board.
+
 | File | What it is |
 |---|---|
 | `zl80.kicad_pro`, `zl80.kicad_sch` | The KiCad project and its root sheet (KiCad 7 format; KiCad 8 and 9 open it). The root sheet has one box per page; double-click a box to open the page. |

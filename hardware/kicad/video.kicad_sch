@@ -1,7 +1,7 @@
 (kicad_sch (version 20230121) (generator eeschema)
   (uuid "26e4335b-62e6-59bb-89e4-b7bd87986d88")
   (paper "A2")
-  (title_block (title "Video: TMS9918A and VRAM") (date "2026-10-27") (rev "0.3")
+  (title_block (title "Video, TMS9918A and VRAM") (date "2026-10-27") (rev "0.3")
     (comment 1 "Z80 3.58 MHz, TMS9918A + 16 KB SRAM VRAM, AY-3-8910, 512 KB flash + 512 KB SRAM, 82C55 + PS/2, FT245RL USB-C")
     (comment 2 "Design only: not built or tested")
   )
