@@ -7,6 +7,7 @@ The KiCad schematic of the board described in [docs/hardware.md](../../docs/hard
 | File | What it is |
 |---|---|
 | `zl80.kicad_pro`, `zl80.kicad_sch` | The KiCad project and schematic (KiCad 7 format; KiCad 8 and 9 open it). |
+| `zl80.kicad_sym`, `sym-lib-table` | The board's symbols as a project library, so KiCad finds the `zl80` library. |
 | `gen_schematic.py` | Generates the schematic. Change the circuit here, not in KiCad. |
 | `sch.py` | The small schematic writer that `gen_schematic.py` uses. |
 | `check_schematic.py` | Checks that the file parses and that every pin is either connected or marked as not connected. |
@@ -17,6 +18,12 @@ To regenerate the schematic and run the check:
 ```
 python gen_schematic.py
 python check_schematic.py
+```
+
+With KiCad installed, also run its electrical rules check; it should report 0 violations. The netlist KiCad exports has the same 187 nets as `zl80-netlist.txt` (KiCad leaves out the PWR_FLAG markers).
+
+```
+kicad-cli sch erc --severity-all zl80.kicad_sch
 ```
 
 ## How the schematic is drawn
