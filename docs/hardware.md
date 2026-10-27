@@ -30,7 +30,7 @@ Status: design. Nothing here is built or tested yet. The items in "Check before 
 | CPU | Z80 (CMOS, Z84C00), 3.579545 MHz | Clocked from the VDP's CPUCLK pin, so one crystal drives CPU, video and sound in step. |
 | Video | TMS9928A | Same registers and software as the TMS9918A. It outputs Y, R-Y, B-Y instead of NTSC composite, which converts cleanly to RGB for SCART. |
 | VRAM | 16 KB | The most the TMS99x8A family can address. |
-| Sound | AY-3-8910 (or YM2149), 1.789773 MHz | The 40-pin AY-3-8910 has two I/O ports (A and B), used for the joysticks. |
+| Sound | AY-3-8910 or AY-3-8912 (or YM2149), 1.789773 MHz | Both have the same 16 registers and sound. The 40-pin AY-3-8910 has I/O ports A and B; the 28-pin AY-3-8912 has only port A. See "Joysticks" for the one wiring difference. |
 | ROM | 512 KB flash, SST39SF040 (DIP-32) | The largest common 5 V parallel flash in DIP. It can be rewritten in the console. |
 | RAM | 512 KB SRAM, AS6C4008 (DIP-32) | The largest common 5 V SRAM in DIP. |
 | Keyboard | 8255 PPI with the MSX key matrix | See "Keyboard". |
@@ -80,12 +80,12 @@ The Z80 decodes the low 8 address bits for I/O. The video, sound and keyboard po
 | 0x81 | 68B50 ACIA | Data |
 | 0x98 | TMS9928A | VRAM data |
 | 0x99 | TMS9928A | Control: register write and VRAM address (write), status (read) |
-| 0xA0 | AY-3-8910 | Register select |
-| 0xA1 | AY-3-8910 | Data write |
-| 0xA2 | AY-3-8910 | Data read |
+| 0xA0 | AY-3-8910/8912 | Register select |
+| 0xA1 | AY-3-8910/8912 | Data write |
+| 0xA2 | AY-3-8910/8912 | Data read |
 | 0xA8 | 8255 port A | Free, 8 outputs (LEDs, expansion) |
 | 0xA9 | 8255 port B | Keyboard row bits (read, 0 = key down) |
-| 0xAA | 8255 port C | Bits 0-3: keyboard row select (write). Bits 4-7 free. |
+| 0xAA | 8255 port C | Bits 0-3: keyboard row select (write). Bit 4: joystick select on the AY-3-8912 board. Bits 5-7 free. |
 | 0xAB | 8255 control | Write 0x82 at start: A out, B in, C out |
 
 Any other port does nothing on the board. In the emulator's hardware mode it stops the program with an error.
@@ -112,8 +112,12 @@ Choice: **the MSX key matrix read through an 8255 PPI.**
 
 - Two DB9 ports, Atari/Sega pinout: up, down, left, right, two buttons.
 - AY port A is the input: bits 0-3 directions, bits 4-5 buttons, 0 = pressed.
-- AY port B is an output: bit 6 selects joystick 1 or 2.
-- The AY mixer register 7 must keep bit 6 = 0 (port A input) and bit 7 = 1 (port B output).
+- Choosing joystick 1 or 2 depends on the sound chip:
+  - **AY-3-8910:** port B is an output, and its bit 6 selects the joystick (0 = joystick 1). While port B is still an input after reset, a pull-up selects joystick 2, until the kernel sets register 7.
+  - **AY-3-8912:** there is no port B. A 74HC157 switches port A between the two DB9 ports, and 8255 PC4 drives its select input (0 = joystick 1). Put a 10 kohm pull-down on PC4, because the 8255 pins float until the kernel sets them. With only one joystick, wire it straight to port A and leave out the 74HC157.
+- In both boards 0 selects joystick 1, and the kernel leaves both select lines at 0. So one kernel ROM runs on both boards, and `key` reads joystick 1 on either.
+- The AY mixer register 7 must keep bit 6 = 0 (port A input). The kernel also keeps bit 7 = 1 (port B output). On the AY-3-8912 bit 7 has no effect.
+- On the AY-3-8912 register 15 is still there and reads back what was written, but it has no pins. On the AY-3-8910 it reads the port B pins while port B is an input. The emulator does both.
 
 ## SCART
 
@@ -219,4 +223,5 @@ The existing display modules (OLED, TFT, Nokia, MC6845, MC6847) stay as fantasy 
 - The RGB converter values for the TMS9928A output levels.
 - The 74HCT670 page mapper against the Zeta SBC v2 schematic.
 - The SCART pin numbers against a SCART pinout sheet before connecting a TV.
+- For the AY-3-8912: its 28-pin pinout, and which of the chip-select pins (A8, A9) the smaller package keeps. BDIR, BC1 and BC2 work as on the AY-3-8910. Also check that register 15 reads back as the emulator assumes.
 - That the ATmega converter answers a row change before the Z80 reads the row. An `OUT` followed straight away by `IN` leaves only a few microseconds at 3.58 MHz.
