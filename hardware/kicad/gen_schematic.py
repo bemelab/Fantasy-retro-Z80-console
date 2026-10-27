@@ -290,7 +290,7 @@ def build():
     cpu = pg
 
     # --- page 3: video -----------------------------------------------------------------------------------------------
-    pg = Layout(proj.page("Video: TMS9918A and VRAM", "video.kicad_sch"), 4)
+    pg = Layout(proj.page("Video, TMS9918A and VRAM", "video.kicad_sch"), 4)
     t = {"24": "D7", "23": "D6", "22": "D5", "21": "D4", "20": "D3", "19": "D2", "18": "D1", "17": "D0",  # CD0 is the MSB
          "13": "A0", "14": "~{CSW}", "15": "~{CSR}", "16": "VDP_INT", "34": "~{RESET}", "39": "VXT1", "40": "VXT2",
          "38": "CPUCLK", "37": None, "33": V, "12": G, "1": "~{VRAS}", "2": "~{VCAS}", "11": "VR~{W}", "36": "COMVID",

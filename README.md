@@ -61,6 +61,24 @@ Other files: `cpc464/catch.bas` (a BASIC game for the Amstrad CPC464) and `docs/
 
 `docs/hardware.md` is the plan for a real ZL-80 board: Z80, TMS9918A video, AY-3-8910 sound, 512 KB flash and 512 KB RAM, a PS/2 PC keyboard and two joysticks, and SCART output to a TV. Its KiCad schematic is in `hardware/kicad/`.
 
+![ZL-80 board, 3D view](hardware/images/pcb-3d-angle.png)
+
+The board is 138 x 105 mm with 4 layers. It has not been built yet.
+
+| Top | Bottom |
+|---|---|
+| ![Top, 3D](hardware/images/pcb-3d-top.png) | ![Bottom, 3D](hardware/images/pcb-3d-bottom.png) |
+
+PCB layout: [all copper layers](hardware/images/pcb-layout.svg), [top](hardware/images/pcb-top-copper.svg), [inner signal layer In2](hardware/images/pcb-inner2-copper.svg), [bottom](hardware/images/pcb-bottom-copper.svg).
+
+Schematic pages (click for full size):
+
+| | |
+|---|---|
+| [![Overview](hardware/images/schematic-1-overview.svg)](hardware/images/schematic-1-overview.svg) Overview | [![CPU, memory and decoding](hardware/images/schematic-2-cpu-memory.svg)](hardware/images/schematic-2-cpu-memory.svg) CPU, memory and decoding |
+| [![Video](hardware/images/schematic-3-video.svg)](hardware/images/schematic-3-video.svg) Video: TMS9918A and VRAM | [![Sound and joysticks](hardware/images/schematic-4-sound.svg)](hardware/images/schematic-4-sound.svg) Sound and joysticks |
+| [![Keyboard and USB](hardware/images/schematic-5-keyboard-usb.svg)](hardware/images/schematic-5-keyboard-usb.svg) Keyboard and USB | [![Power, reset and TV](hardware/images/schematic-6-power-tv.svg)](hardware/images/schematic-6-power-tv.svg) Power, reset and TV |
+
 Pick **ZL-80 board (real hardware)** in the display list to run a program on an exact copy of that board: Z80 at 3.58 MHz, paged memory, a kernel ROM, only the real I/O ports, and the frame interrupt. A program that runs there is meant to run on the real board unchanged.
 
 In that display, **ROM .bin** saves a 512 KB flash image for an EEPROM programmer and **HEX** saves the program as Intel HEX. **Send to board** sends the program to a real board over its USB port (Web Serial, Chrome or Edge), and **Send to emulator** sends it the same way to the emulated board. The real-board path has not been tried on hardware yet.
