@@ -1866,7 +1866,7 @@ function expand(src){
    const a=["_tx = "+m[1],"_ty = "+m[2],"_tc = "+m[3]];
    for(const ch of m[4].toUpperCase()){const c=ch.charCodeAt(0);a.push("_c = "+(c>=32&&c<96?c-32:0),"gosub _glyph","_tx = _tx + 4")}
    put(a)}
-  else if(MOD.hw&&(k==="tprint"||k==="vprint"))throw Error("line "+(i+1)+": "+k+" is for the MC6845 and MC6847 fantasy displays; the ZL-80 board has a TMS9928A");
+  else if(MOD.hw&&(k==="tprint"||k==="vprint"))throw Error("line "+(i+1)+": "+k+" is for the MC6845 and MC6847 fantasy displays; the ZL-80 board has a TMS9918A");
   else if(k==="tprint"&&(m=/^tprint[\s,]+"([^"]*)"/i.exec(body))){put([...m[1]].map(ch=>"crtc 31 "+ch.charCodeAt(0)))}
   else if(k==="vprint"&&(m=/^vprint[\s,]+(\d+)[\s,]+(\d+)[\s,]+"([^"]*)"/i.exec(body))){const base=0x8000+(+m[2])*32+(+m[1]);put([...m[3].toUpperCase()].map((ch,j)=>{const c=ch.charCodeAt(0),cd=c>=64&&c<96?c-64:c>=32&&c<64?c:32,ad=base+j;return "poke "+(ad>>8)+" "+(ad&255)+" "+cd}))}
   else if(k==="data"&&w.length>2&&w[1]!=="="){put(w.slice(2).map((v,i)=>w[1]+"["+i+"] = "+v))}
@@ -1924,7 +1924,7 @@ function compile(src){
   case "ayget":ld(t[2]);call("AYRD");setV(t[1]);return 1;
   case "note":ld(t[1]);st16(K_ARGX);ld(t[2]);call("NOTE");return 1;
   case "crtc":case "crtcget":case "tcolor":case "locate":case "thex":case "tcls":case "vdg":case "vbase":
-   throw Error(k+" is for the MC6845 and MC6847 fantasy displays; the ZL-80 board has a TMS9928A")}
+   throw Error(k+" is for the MC6845 and MC6847 fantasy displays; the ZL-80 board has a TMS9918A")}
   return 0};
  const jp=op=>{e(op,0,0);return code.length-2};
  const cond=(a,o,b)=>{let j;
@@ -2010,7 +2010,7 @@ const MODS=[
  {n:"MC6845 CRTC graphics 128x64",c:"MC6845 CRTC addressing pixel RAM: R1 x 8 pixels wide, R6 x (R9+1) tall, R12/R13 scroll, 16 colors",w:128,h:64,sw:7,xm:127,ym:255,hi:0xA0,mono:0,crtc:2},
  {n:"TMS9918A VDP 256x192 + border",c:"TMS9918A VDP: 256x192 plus border, 16 colors, Graphics I/II, Text 40x24, Multicolor, 32 sprites, status flags, 16 KB VRAM",w:272,h:208,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"tms"},
  {n:"MC6847 VDG 256x192",c:"MC6847 VDG: text, semigraphics and 8 graphics modes, 4:3 (port 16 mode, port 17 video base)",w:256,h:192,sw:7,xm:127,ym:255,hi:0xA0,mono:0,assist:"vdg"},
- {n:"ZL-80 board (real hardware)",c:"ZL-80 board, docs/hardware.md: Z80 at 3.58 MHz, 512 KB flash + 512 KB RAM in 16 KB pages, TMS9928A on ports 98h/99h with the frame interrupt, AY-3-8910 on A0h-A2h, MSX keyboard matrix on the 8255. Only what the real board can do.",w:272,h:208,sw:7,xm:127,ym:255,hi:0xA0,mono:0,hw:1}];
+ {n:"ZL-80 board (real hardware)",c:"ZL-80 board, docs/hardware.md: Z80 at 3.58 MHz, 512 KB flash + 512 KB RAM in 16 KB pages, TMS9918A on ports 98h/99h with the frame interrupt, AY-3-8910 on A0h-A2h, MSX keyboard matrix on the 8255. Only what the real board can do.",w:272,h:208,sw:7,xm:127,ym:255,hi:0xA0,mono:0,hw:1}];
 let MOD=MODS[0];
 const mem=new Uint8Array(65536);
 const GL={" ":"00000","0":"75557","1":"26227","2":"71747","3":"71717","4":"55711","5":"74717","6":"74757","7":"71111","8":"75757","9":"75717",":":"02020",".":"00002","-":"00700","+":"02720","!":"22202","?":"71202",",":"00024","=":"07070","/":"11244",A:"25755",B:"65656",C:"34443",D:"65556",E:"74647",F:"74644",G:"34553",H:"55755",I:"72227",J:"11152",K:"55655",L:"44447",M:"57755",N:"65555",O:"25552",P:"65644",Q:"25573",R:"65655",S:"34216",T:"72222",U:"55557",V:"55552",W:"55775",X:"55255",Y:"55222",Z:"71247"};
@@ -2032,7 +2032,7 @@ function step(){
  cpu.step()}
 
 /* ZL-80 board (docs/hardware.md). Z80 at 3.58 MHz; 512 KB flash (pages 0-31) and 512 KB RAM (pages 32-63) behind four 16 KB
-   page registers; TMS9928A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; 68B50 on 0x80/0x81.
+   page registers; TMS9918A on 0x98/0x99 with the frame interrupt; AY-3-8910 on 0xA0-0xA2; 8255 keyboard on 0xA8-0xAB; 68B50 on 0x80/0x81.
    Kernel RAM: 0xFF00 ARGX, 0xFF01 ARGY, 0xFF02 last VDP status, 0xFF03 random seed, 0xFF05/0xFF06 loader record type and error,
    0xFF10-0xFF17 copies of VDP registers R0-R7. */
 const HWCLK=3579545,HWFRAME=59736,HWVBL=43776,K_ARGX=0xFF00,K_ARGY=0xFF01,K_STAT=0xFF02,K_SEED=0xFF03,K_TYPE=0xFF05,K_ERR=0xFF06,K_VRS=0xFF10,CHAR_T=311; // CHAR_T: one serial byte (10 bits at 115200) in T-states
@@ -2153,7 +2153,7 @@ const hwCpu=Z80({rd:a=>phys[bankOff[a>>14]|a&0x3FFF],wr:(a,v)=>{const o=bankOff[
 function hwFault(m){if(!bad)bad=m+" (PC 0x"+hx(cpu.pc,4)+")"}
 function vdpAccess(){ // the TMS9918A needs 8 us between VRAM accesses during the active display, 2 us otherwise
  const pos=cpu.cyc-hwF0,need=(VR[1]&0x40)&&pos<HWVBL?29:8,gap=cpu.cyc-vLast;
- if(gap<need)hwFault("VRAM accesses only "+gap+" T-states apart; the TMS9928A needs "+need+(need>8?" during the active display":""));
+ if(gap<need)hwFault("VRAM accesses only "+gap+" T-states apart; the TMS9918A needs "+need+(need>8?" during the active display":""));
  vLast=cpu.cyc}
 // joystick 1 or 2 on AY port A. AY-3-8910 board: port B bit 6 selects (a pull-up picks joystick 2 while port B is an input);
 // AY-3-8912 board (no port B): 8255 PC4 drives a 74HC157 instead. 0 = joystick 1 on both, so one kernel fits both boards.
